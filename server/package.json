@@ -1,0 +1,17 @@
+{
+  "name": "express-hub-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "快递分拨管理系统 - 后端",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "seed": "node src/seed.js"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.2.17",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  }
+}

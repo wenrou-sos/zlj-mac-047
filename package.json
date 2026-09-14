@@ -1,0 +1,12 @@
+{
+  "name": "express-hub",
+  "version": "1.0.0",
+  "private": true,
+  "description": "快递分拨管理系统：到车/卸车/分拣/发车时间记录，超时预警、积压统计、异常件拦截",
+  "scripts": {
+    "setup": "cd server && npm install && cd ../client && npm install",
+    "server": "npm --prefix server start",
+    "client": "npm --prefix client run dev",
+    "seed": "npm --prefix server run seed -- --force"
+  }
+}
