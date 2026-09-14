@@ -82,19 +82,23 @@ router.get('/stats/backlog', async (req, res) => {
 });
 
 // 异常件统计
+// 台账口径：intercepted_at IS NOT NULL 表示"曾被拦截过的异常件"（含已解除），
+// 不能用 is_abnormal（解除拦截时会置 FALSE，导致已处理记录从台账消失、与累计数对不上）
 router.get('/stats/abnormal', async (req, res) => {
   const byType = await query(
     `SELECT abnormal_type, COUNT(*)::int AS count
-     FROM packages WHERE is_abnormal GROUP BY abnormal_type ORDER BY count DESC`
+     FROM packages WHERE intercepted_at IS NOT NULL
+     GROUP BY abnormal_type ORDER BY count DESC`
   );
   const recent = await query(
     `SELECT p.*, v.plate_no, v.route_code
      FROM packages p LEFT JOIN vehicles v ON v.id = p.vehicle_id
-     WHERE p.is_abnormal ORDER BY p.intercepted_at DESC NULLS LAST LIMIT 20`
+     WHERE p.intercepted_at IS NOT NULL
+     ORDER BY p.intercepted_at DESC LIMIT 20`
   );
   const [summary] = await query(
     `SELECT
-       COUNT(*) FILTER (WHERE is_abnormal)::int                       AS total_abnormal,
+       COUNT(*) FILTER (WHERE intercepted_at IS NOT NULL)::int         AS total_abnormal,
        COUNT(*) FILTER (WHERE status = 'intercepted')::int            AS intercepted,
        COUNT(*) FILTER (WHERE intercept_released_at IS NOT NULL)::int AS released
      FROM packages`

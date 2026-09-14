@@ -4,9 +4,9 @@ import { query } from '../db.js';
 
 const router = Router();
 
-// 包裹列表（支持状态/目的地/异常/车辆/单号筛选）
+// 包裹列表（分页，支持状态/目的地/异常/车辆/单号筛选）
 router.get('/', async (req, res) => {
-  const { status, destination, abnormal, vehicle_id, q, limit = 200 } = req.query;
+  const { status, destination, abnormal, vehicle_id, q, page = 1, pageSize = 50 } = req.query;
   const conds = [];
   const params = [];
   const add = (clause, val) => { params.push(val); conds.push(clause.replace('?', `$${params.length}`)); };
@@ -17,16 +17,24 @@ router.get('/', async (req, res) => {
   if (abnormal === 'true') conds.push('p.is_abnormal = TRUE');
   if (q) add('p.tracking_no ILIKE ?', `%${q}%`);
 
-  params.push(Math.min(Number(limit) || 200, 1000));
-  const rows = await query(
-    `SELECT p.*, v.plate_no, v.route_code
-     FROM packages p LEFT JOIN vehicles v ON v.id = p.vehicle_id
-     ${conds.length ? 'WHERE ' + conds.join(' AND ') : ''}
-     ORDER BY p.created_at DESC
-     LIMIT $${params.length}`,
+  const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+  const pageNum = Math.max(1, Number(page) || 1);
+  const size = Math.min(Math.max(1, Number(pageSize) || 50), 200);
+
+  const [{ count }] = await query(
+    `SELECT COUNT(*)::int AS count FROM packages p ${where}`,
     params
   );
-  res.json(rows);
+  params.push(size, (pageNum - 1) * size);
+  const items = await query(
+    `SELECT p.*, v.plate_no, v.route_code
+     FROM packages p LEFT JOIN vehicles v ON v.id = p.vehicle_id
+     ${where}
+     ORDER BY p.created_at DESC, p.id DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+  res.json({ items, total: count, page: pageNum, pageSize: size });
 });
 
 // 新增包裹（模拟到件扫描）

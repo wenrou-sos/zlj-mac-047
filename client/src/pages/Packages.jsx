@@ -1,12 +1,15 @@
-import React, { useEffect, useState } from 'react';
-import { Plus, RefreshCw, Search, Ban, Undo2, PackageCheck, Forklift } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Plus, RefreshCw, Search, Ban, Undo2, PackageCheck, Forklift, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
 import { Badge, Modal, Empty } from '../components/common.jsx';
 import { PACKAGE_STATUS, ABNORMAL_TYPES, fmtDateTime } from '../utils.js';
 
+const PAGE_SIZE = 50;
+
 export default function Packages() {
-  const [packages, setPackages] = useState([]);
+  const [data, setData] = useState({ items: [], total: 0 });
+  const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({ status: '', abnormal: '', q: '' });
   const [interceptTarget, setInterceptTarget] = useState(null);
   const [interceptForm, setInterceptForm] = useState({ abnormal_type: 'damaged', note: '' });
@@ -14,19 +17,19 @@ export default function Packages() {
   const [createForm, setCreateForm] = useState({ tracking_no: '', destination: '', weight_kg: '' });
   const toast = useToast();
 
-  const load = async (f = filters) => {
+  const load = useCallback(async () => {
     try {
-      setPackages(await api.packages({ ...f, limit: 300 }));
+      setData(await api.packages({ ...filters, page, pageSize: PAGE_SIZE }));
     } catch (e) {
       toast(e.message, 'error');
     }
-  };
+  }, [filters, page]);
 
   useEffect(() => {
     load();
-    const timer = setInterval(() => load(), 15000);
+    const timer = setInterval(load, 15000);
     return () => clearInterval(timer);
-  }, []);
+  }, [load]);
 
   const run = async (fn, okMsg) => {
     try {
@@ -61,10 +64,11 @@ export default function Packages() {
   };
 
   const setF = (patch) => {
-    const next = { ...filters, ...patch };
-    setFilters(next);
-    load(next);
+    setFilters((f) => ({ ...f, ...patch }));
+    setPage(1); // 筛选变化回到第一页
   };
+
+  const totalPages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
 
   return (
     <div>
@@ -99,7 +103,7 @@ export default function Packages() {
               <option value="">全部包裹</option>
               <option value="true">仅异常件</option>
             </select>
-            <span className="text-muted">{packages.length} 件</span>
+            <span className="text-muted">共 {data.total} 件</span>
           </div>
         </div>
         <div className="table-wrap">
@@ -117,7 +121,7 @@ export default function Packages() {
               </tr>
             </thead>
             <tbody>
-              {packages.map((p) => (
+              {data.items.map((p) => (
                 <tr key={p.id} className={p.status === 'intercepted' ? 'row-alert' : ''}>
                   <td className="mono">{p.tracking_no}</td>
                   <td>{p.destination}</td>
@@ -176,8 +180,25 @@ export default function Packages() {
               ))}
             </tbody>
           </table>
-          {packages.length === 0 && <Empty text="没有符合条件的包裹" />}
+          {data.items.length === 0 && <Empty text="没有符合条件的包裹" />}
         </div>
+        {/* 分页栏 */}
+        {data.total > 0 && (
+          <div className="card-header" style={{ borderTop: '1px solid var(--border)', borderBottom: 'none' }}>
+            <span className="text-muted">
+              第 {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, data.total)} 件，共 {data.total} 件
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button className="btn btn-sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+                <ChevronLeft size={14} /> 上一页
+              </button>
+              <span className="text-muted mono">{page} / {totalPages}</span>
+              <button className="btn btn-sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+                下一页 <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {interceptTarget && (

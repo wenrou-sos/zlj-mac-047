@@ -100,10 +100,13 @@ export default function Vehicles() {
       return;
     }
     try {
+      // datetime-local 是不带时区的本地时间，必须显式按浏览器时区转为 ISO(UTC)，
+      // 否则服务端会按自身时区解析，导致非 UTC 环境下时间整体偏移
+      const toISO = (v) => (v ? new Date(v).toISOString() : null);
       await api.createVehicle({
         ...form,
-        planned_arrival: form.planned_arrival || null,
-        planned_departure: form.planned_departure || null,
+        planned_arrival: toISO(form.planned_arrival),
+        planned_departure: toISO(form.planned_departure),
       });
       toast('到车预报已登记', 'success');
       setShowCreate(false);
@@ -188,7 +191,7 @@ export default function Vehicles() {
                       <div className="mono">{fmtTime(v.planned_departure)}</div>
                       {v.departed_at
                         ? <div className="text-muted">实际 {fmtTime(v.departed_at)}</div>
-                        : <div className="text-muted">{v.planned_departure ? fmtAgo(v.planned_departure).replace('前', '后') : ''}</div>}
+                        : <div className="text-muted">{v.planned_departure ? fmtAgo(v.planned_departure) : ''}</div>}
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>

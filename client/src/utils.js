@@ -37,11 +37,14 @@ export const fmtDateTime = (t) => {
 };
 
 // 距现在多少分钟，如 "12分钟前"
+// 相对时间：过去显示 "12分钟前"，未来显示 "35分钟后"
 export const fmtAgo = (t) => {
   if (!t) return '—';
-  const min = Math.round((Date.now() - new Date(t).getTime()) / 60000);
-  if (min < 1) return '刚刚';
-  if (min < 60) return `${min}分钟前`;
-  const h = Math.floor(min / 60);
-  return `${h}小时${min % 60 ? `${min % 60}分` : ''}前`;
+  const diff = Math.round((Date.now() - new Date(t).getTime()) / 60000);
+  const abs = Math.abs(diff);
+  const text =
+    abs < 1 ? '不到1分钟'
+    : abs < 60 ? `${abs}分钟`
+    : `${Math.floor(abs / 60)}小时${abs % 60 ? `${abs % 60}分` : ''}`;
+  return diff >= 0 ? `${text}前` : `${text}后`;
 };
