@@ -100,3 +100,31 @@ export const ABNORMAL_TYPE_LABEL = {
   damaged: '外包装破损', wrong_route: '错分线路', overweight: '超重超限',
   prohibited: '疑似违禁品', address_issue: '地址信息异常',
 };
+
+// ── 班次交接 ──
+export const SHIFT_PRESETS = [
+  { shift_code: 'day',    name: '白班' },
+  { shift_code: 'swing',  name: '中班' },
+  { shift_code: 'night',  name: '夜班' },
+];
+
+export const SHIFT_CODE_LABEL = Object.fromEntries(
+  SHIFT_PRESETS.map((s) => [s.shift_code, s.name]).concat([['custom', '自定义']])
+);
+
+export const HANDOVER_STATUS_LABEL = {
+  draft: '草稿', pending: '待签收', signed: '已签收', cancelled: '已取消',
+};
+
+export const HANDOVER_ITEM_STATUS_LABEL = {
+  pending: '待接收', accepted: '已接收', returned: '已退回', resolved: '作业已完成',
+};
+
+// 交接事项类型：未发车车辆 / 待处理包裹 / 拦截件 / 超时事项 / 口头补充
+export const HANDOVER_ITEM_TYPE_LABEL = {
+  vehicle: '未发车车辆',
+  package: '待处理包裹',
+  intercept: '拦截件',
+  alert: '超时事项',
+  note: '补充事项',
+};

@@ -51,6 +51,15 @@ cd client && npm install && npm run dev      # http://localhost:5173
 - 拦截后**禁止装车**（后端强制校验），处理完成后可解除拦截
 - 异常类型分布统计与最近拦截记录
 
+### 6. 班次交接
+- 按作业班次（白班/中班/夜班，支持跨午夜）生成交接单，**自动汇集**未发车车辆、待处理包裹、拦截件、超时事项并拍成快照
+- 交班人可补充总体说明与逐条备注，也可在交接进行中**追加现场新出现的事项**或口头补充
+- 接班人**逐项接收或退回**（退回必须填写原因）；交接期间作业正常继续：
+  - 期间完成的事项（发车、装车、解除拦截、超时消除）**自动确认并提示变化，不重复移交**
+  - **未接收/退回事项责任仍归交出班次**，自动带入该班次下一张交接单
+- 全部处理完方可**签收**；签收后单据与逐项结果**立即冻结为历史快照，任何修改接口拒绝写入**（刷新不能改写历史）
+- 已签收单据保留「后续处理去向」（已发车/已装车/恢复作业）与**再次转交链**，跨午夜班次凭交接单号全程可追溯
+
 ## 切换真实 PostgreSQL
 
 ```bash
@@ -79,6 +88,14 @@ cd server && npm run seed -- --force
 | GET/POST | `/api/packages` | 包裹查询 / 到件登记 |
 | POST | `/api/packages/:id/sort` `/load` | 分拣 / 装车 |
 | POST | `/api/packages/:id/intercept` `/release` | 拦截 / 解除拦截 |
+| GET/POST | `/api/shifts` | 班次列表 / 新建班次（夜班可跨午夜） |
+| GET/POST | `/api/handovers` | 交接单台账 / 生成交接单（自动汇集快照） |
+| GET | `/api/handovers/:id` | 交接单详情（未签收含实时变化，已签收含后续去向） |
+| PUT | `/api/handovers/:id/summary` | 交班总体说明（仅草稿） |
+| POST | `/api/handovers/:id/submit` `/sign` `/cancel` | 提交签收 / 签收冻结 / 作废 |
+| POST | `/api/handovers/:id/items` | 交接进行中追加事项 |
+| PUT | `/api/handovers/items/:id/note` | 交班人逐条补充说明 |
+| PUT | `/api/handovers/items/:id/decision` | 接班人逐项接收 / 退回 / 撤回 |
 | GET | `/api/stats/backlog` `/api/stats/abnormal` | 积压 / 异常统计 |
 
 ## 目录结构
@@ -91,8 +108,9 @@ express-hub/
 │       ├── db.js           # PGlite / PostgreSQL 适配层
 │       ├── schema.sql      # 表结构
 │       ├── seed.js         # 模拟数据
-│       ├── helpers.js      # 超时预警计算、状态机
-│       └── routes/         # vehicles / packages / stats
+│       ├── helpers.js      # 超时预警计算、状态机、交接常量
+│       ├── handover.js     # 交接快照汇集 / 变化检测 / 去向追溯
+│       └── routes/         # vehicles / packages / stats / shifts / handovers
 └── client/                 # React 前端
     └── src/
         ├── pages/          # 总览 / 车辆 / 包裹 / 统计

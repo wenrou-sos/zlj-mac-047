@@ -27,11 +27,16 @@ router.get('/overview', async (req, res) => {
   const vehicles = await query(`SELECT * FROM vehicles WHERE status NOT IN ('departed','expected')`);
   const alerts = computeAlerts(vehicles, await getSettings());
 
+  const [handoverPending] = await query(
+    `SELECT COUNT(*)::int AS count FROM shift_handovers WHERE status = 'pending'`
+  );
+
   res.json({
     vehicles: vehicleStats,
     packages: pkgStats,
     alert_count: alerts.length,
     overdue_count: alerts.filter((a) => a.level === 'overdue').length,
+    pending_handover_count: handoverPending.count,
   });
 });
 

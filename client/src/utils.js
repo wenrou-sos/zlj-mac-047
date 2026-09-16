@@ -36,6 +36,39 @@ export const fmtDateTime = (t) => {
   return `${d.getMonth() + 1}/${d.getDate()} ${fmtTime(t)}`;
 };
 
+// 带年份的完整日期时间（交接单跨天追溯用）
+export const fmtFull = (t) => {
+  if (!t) return '—';
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${fmtTime(t)}`;
+};
+
+// 作业日 + 班次
+export const fmtShift = (workDate, name) => `${(workDate || '').slice(5).replace('-', '/')} ${name}`;
+
+// 班次交接
+export const HANDOVER_STATUS = {
+  draft:     { label: '草稿',   color: '#64748b', bg: '#f1f5f9' },
+  pending:   { label: '待签收', color: '#b45309', bg: '#fef3c7' },
+  signed:    { label: '已签收', color: '#15803d', bg: '#dcfce7' },
+  cancelled: { label: '已取消', color: '#94a3b8', bg: '#f1f5f9' },
+};
+
+export const HANDOVER_ITEM_STATUS = {
+  pending:  { label: '待接收', color: '#64748b', bg: '#f1f5f9' },
+  accepted: { label: '已接收', color: '#15803d', bg: '#dcfce7' },
+  returned: { label: '已退回', color: '#b91c1c', bg: '#fee2e2' },
+  resolved: { label: '作业已完成', color: '#0f766e', bg: '#ccfbf1' },
+};
+
+export const HANDOVER_ITEM_TYPES = {
+  vehicle:   { label: '未发车车辆', color: '#1d4ed8', bg: '#dbeafe' },
+  package:   { label: '待处理包裹', color: '#b45309', bg: '#fef3c7' },
+  intercept: { label: '拦截件',     color: '#b91c1c', bg: '#fee2e2' },
+  alert:     { label: '超时事项',   color: '#c2410c', bg: '#ffedd5' },
+  note:      { label: '补充事项',   color: '#7c3aed', bg: '#ede9fe' },
+};
+
 // 距现在多少分钟，如 "12分钟前"
 // 相对时间：过去显示 "12分钟前"，未来显示 "35分钟后"
 export const fmtAgo = (t) => {

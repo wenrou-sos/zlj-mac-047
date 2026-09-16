@@ -316,3 +316,129 @@ table.tbl { width: 100%; border-collapse: collapse; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ── 班次交接 ── */
+.nav-badge-amber { background: var(--amber) !important; }
+
+.row-cancel { opacity: 0.55; }
+
+.shift-chip {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 14px; min-width: 190px; position: relative;
+  background: #fff;
+}
+.shift-chip.active { border-color: #93c5fd; background: #eff6ff; }
+.shift-chip b { font-size: 13px; }
+.shift-chip svg { color: var(--primary); }
+.shift-live {
+  position: absolute; top: -8px; right: 10px;
+  background: var(--green); color: #fff; font-size: 10px; font-weight: 700;
+  padding: 2px 8px; border-radius: 999px;
+}
+
+.preset-btn {
+  flex: 1; padding: 8px 4px; border-radius: 8px;
+  border: 1px solid var(--border); background: #fff; cursor: pointer;
+  font-size: 12px; color: var(--text-2); transition: all 0.15s;
+}
+.preset-btn.active { border-color: var(--primary); background: #eff6ff; color: var(--primary-dark); font-weight: 600; }
+
+.ho-mini-counts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.ho-mini-counts .mc { padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.mc-acc { background: #dcfce7; color: #15803d; }
+.mc-ret { background: #fee2e2; color: #b91c1c; }
+.mc-done { background: #ccfbf1; color: #0f766e; }
+.mc-pen { background: #fef3c7; color: #b45309; }
+
+/* 详情 */
+.ho-summary { display: flex; gap: 12px; align-items: flex-start; }
+.ho-summary-icon { color: var(--text-3); margin-top: 3px; flex-shrink: 0; }
+
+.ho-meta { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); font-size: 12px; color: var(--text-3); }
+.ho-signed-meta { color: var(--green); font-weight: 600; }
+
+.ho-stat-bar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.ho-stat {
+  flex: 1; min-width: 120px; background: #fff; border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px;
+}
+.ho-stat b { font-size: 22px; }
+.ho-stat span { font-size: 12px; color: var(--text-3); }
+.ho-stat-pending b { color: var(--amber); }
+.ho-stat-accepted b { color: var(--green); }
+.ho-stat-returned b { color: var(--red); }
+.ho-stat-resolved b { color: #0f766e; }
+
+.ho-group-title {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 13px 16px; border: none; background: none; cursor: pointer;
+  font-size: 14px; text-align: left;
+}
+.ho-group-title:hover { background: #f8fafc; }
+.ho-type-icon { width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ho-count {
+  background: #f1f5f9; color: var(--text-2); border-radius: 999px;
+  min-width: 24px; height: 22px; padding: 0 8px; font-size: 12px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ho-chevron { margin-left: auto; color: var(--text-3); transition: transform 0.2s; }
+
+.ho-items { border-top: 1px solid var(--border); }
+.ho-item {
+  display: flex; gap: 12px; align-items: flex-start; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid #f1f5f9;
+}
+.ho-item:last-child { border-bottom: none; }
+.ho-item-main { flex: 1; min-width: 0; }
+.ho-item-title { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
+.ho-item-sub { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+.ho-item-detail { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+.ho-item-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex-shrink: 0; }
+.ho-decide { display: flex; gap: 6px; }
+
+.ho-appended { background: #ede9fe; color: #7c3aed; font-size: 10px; padding: 1px 7px; border-radius: 999px; font-weight: 600; }
+.ho-chain-tag { display: inline-flex; align-items: center; gap: 3px; background: #f1f5f9; color: var(--text-2); font-size: 10px; padding: 1px 7px; border-radius: 999px; font-weight: 600; }
+
+.ho-note {
+  margin-top: 7px; font-size: 12px; color: var(--text-2);
+  background: #f8fafc; border-left: 3px solid #cbd5e1;
+  padding: 6px 10px; border-radius: 0 6px 6px 0; display: flex; gap: 6px; align-items: flex-start;
+}
+.ho-note svg { margin-top: 2px; flex-shrink: 0; }
+.ho-return-note { background: var(--red-bg); border-left-color: var(--red); color: #991b1b; }
+.ho-note-edit { display: flex; gap: 8px; margin-top: 7px; }
+.ho-add-note { margin-top: 7px; }
+
+.ho-resolved-note {
+  margin-top: 7px; font-size: 12px; color: #0f766e; display: flex; gap: 6px; align-items: center;
+}
+.ho-live-change {
+  margin-top: 7px; font-size: 12px; color: var(--amber); font-weight: 600;
+  display: flex; gap: 6px; align-items: center;
+}
+.ho-item-resolved { background: #f0fdfa; }
+
+.ho-followup {
+  margin-top: 7px; font-size: 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+}
+.ho-followup-done { color: var(--green); }
+.ho-followup-changed { color: var(--amber); }
+.ho-followup-open { color: var(--text-3); }
+.ho-chain-link { background: #f1f5f9; padding: 1px 8px; border-radius: 999px; font-size: 11px; color: var(--text-2); }
+
+.btn-accept { background: #dcfce7; border-color: #86efac; color: #15803d; font-weight: 600; }
+.btn-accept:hover:not(:disabled) { background: #bbf7d0; }
+.btn-return { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; font-weight: 600; }
+.btn-return:hover:not(:disabled) { background: #fecaca; }
+.btn-sign { background: var(--green); border-color: var(--green); color: #fff; font-weight: 600; }
+.btn-sign:hover:not(:disabled) { background: #15803d; border-color: #15803d; }
+.btn-sign:disabled { opacity: 0.5; }
+
+.ho-appendable { border-color: #fde68a; }
+.ho-append-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 13px; flex-wrap: wrap; }
+.ho-append-row button { margin-left: auto; }
+
+.ho-sign-summary { display: flex; flex-direction: column; gap: 8px; background: #f8fafc; border-radius: 10px; padding: 14px 16px; font-size: 13px; color: var(--text-2); }
+.ho-sign-summary b { font-size: 16px; color: var(--text); margin-right: 4px; }
+.ho-sign-ret { color: var(--red); }

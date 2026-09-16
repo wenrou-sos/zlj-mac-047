@@ -34,4 +34,26 @@ export const api = {
   // 设置
   settings: () => request('/api/settings'),
   saveSettings: (body) => request('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
+  // 班次
+  shifts: () => request('/api/shifts'),
+  createShift: (body) => request('/api/shifts', { method: 'POST', body: JSON.stringify(body) }),
+  // 班次交接单
+  handovers: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/api/handovers${qs ? `?${qs}` : ''}`);
+  },
+  createHandover: (body) => request('/api/handovers', { method: 'POST', body: JSON.stringify(body) }),
+  handoverDetail: (id) => request(`/api/handovers/${id}`),
+  saveSummary: (id, summary_note) =>
+    request(`/api/handovers/${id}/summary`, { method: 'PUT', body: JSON.stringify({ summary_note }) }),
+  submitHandover: (id) => request(`/api/handovers/${id}/submit`, { method: 'POST' }),
+  signHandover: (id, signed_by) =>
+    request(`/api/handovers/${id}/sign`, { method: 'POST', body: JSON.stringify({ signed_by }) }),
+  cancelHandover: (id, reason) =>
+    request(`/api/handovers/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  appendItem: (id, body) => request(`/api/handovers/${id}/items`, { method: 'POST', body: JSON.stringify(body) }),
+  setItemNote: (itemId, note) =>
+    request(`/api/handovers/items/${itemId}/note`, { method: 'PUT', body: JSON.stringify({ note }) }),
+  decideItem: (itemId, body) =>
+    request(`/api/handovers/items/${itemId}/decision`, { method: 'PUT', body: JSON.stringify(body) }),
 };

@@ -1,9 +1,11 @@
-import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
-import { LayoutDashboard, Truck, Package, BarChart3, CheckCircle2, XCircle, Boxes } from 'lucide-react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { LayoutDashboard, Truck, Package, BarChart3, CheckCircle2, XCircle, Boxes, ClipboardCheck } from 'lucide-react';
 import Dashboard from './pages/Dashboard.jsx';
 import Vehicles from './pages/Vehicles.jsx';
 import Packages from './pages/Packages.jsx';
 import Stats from './pages/Stats.jsx';
+import Handovers from './pages/Handovers.jsx';
+import { api } from './api.js';
 
 const ToastCtx = createContext(() => {});
 export const useToast = () => useContext(ToastCtx);
@@ -12,6 +14,7 @@ const PAGES = [
   { key: 'dashboard', label: '监控总览', icon: LayoutDashboard },
   { key: 'vehicles', label: '车辆班次', icon: Truck },
   { key: 'packages', label: '包裹与拦截', icon: Package },
+  { key: 'handovers', label: '班次交接', icon: ClipboardCheck },
   { key: 'stats', label: '积压统计', icon: BarChart3 },
 ];
 
@@ -19,12 +22,23 @@ export default function App() {
   const [page, setPage] = useState('dashboard');
   const [toasts, setToasts] = useState([]);
   const [alertCount, setAlertCount] = useState(0);
+  const [handoverPending, setHandoverPending] = useState(0);
   const idRef = useRef(0);
 
   const toast = useCallback((msg, type = 'info') => {
     const id = ++idRef.current;
     setToasts((ts) => [...ts, { id, msg, type }]);
     setTimeout(() => setToasts((ts) => ts.filter((t) => t.id !== id)), 3500);
+  }, []);
+
+  // 待签收交接单角标（独立于页面轮询，全局 15 秒刷新）
+  useEffect(() => {
+    const tick = () => api.handovers({ status: 'pending' })
+      .then((hs) => setHandoverPending(hs.length))
+      .catch(() => {});
+    tick();
+    const timer = setInterval(tick, 15000);
+    return () => clearInterval(timer);
   }, []);
 
   return (
@@ -46,6 +60,9 @@ export default function App() {
                 {key === 'dashboard' && alertCount > 0 && (
                   <span className="nav-badge">{alertCount}</span>
                 )}
+                {key === 'handovers' && handoverPending > 0 && (
+                  <span className="nav-badge nav-badge-amber">{handoverPending}</span>
+                )}
               </button>
             ))}
           </nav>
@@ -60,6 +77,7 @@ export default function App() {
           {page === 'dashboard' && <Dashboard onAlertCount={setAlertCount} goVehicles={() => setPage('vehicles')} />}
           {page === 'vehicles' && <Vehicles />}
           {page === 'packages' && <Packages />}
+          {page === 'handovers' && <Handovers pendingCount={handoverPending} />}
           {page === 'stats' && <Stats />}
         </main>
       </div>
