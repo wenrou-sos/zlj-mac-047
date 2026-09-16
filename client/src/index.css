@@ -424,6 +424,22 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .conflict-detail span { width: 96px; color: var(--text-3); flex-shrink: 0; }
 .conflict-actions { display: flex; flex-direction: column; gap: 8px; }
 .conflict-btn { justify-content: flex-start; padding: 10px 14px; width: 100%; }
+.conflict-btn-selected {
+  outline: 2px solid var(--primary);
+  outline-offset: -1px;
+  background: #eff6ff;
+  border-color: var(--primary);
+  color: var(--primary-dark);
+  font-weight: 600;
+}
+.conflict-current {
+  margin-left: auto;
+  font-size: 11px;
+  background: var(--primary);
+  color: #fff;
+  padding: 1px 8px;
+  border-radius: 999px;
+}
 .conflict-resolved {
   padding: 10px 14px; background: #f1f5f9; border-radius: 8px;
   font-size: 13px; color: var(--text-2);

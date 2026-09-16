@@ -5,7 +5,7 @@ import Vehicles from './pages/Vehicles.jsx';
 import Packages from './pages/Packages.jsx';
 import Stats from './pages/Stats.jsx';
 import Handheld from './handheld/Handheld.jsx';
-import { queueStore } from './handheld/scanQueue.js';
+import { queueStore, isUnfinishedScan } from './handheld/scanQueue.js';
 import { useQueue } from './handheld/useQueue.js';
 
 const ToastCtx = createContext(() => {});
@@ -21,9 +21,8 @@ const PAGES = [
 
 function HandheldBadge() {
   const snap = useQueue();
-  const n = snap.scans.filter(
-    (s) => s.state === 'pending' || s.state === 'error' || (s.state === 'conflict' && !s.resolution)
-  ).length;
+  // 待补传/失败/未处理冲突/暂留 均属于未完成，持续提醒
+  const n = snap.scans.filter(isUnfinishedScan).length;
   return n > 0 ? <span className="nav-badge nav-badge-amber">{n}</span> : null;
 }
 

@@ -7,7 +7,7 @@ import {
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
 import { Badge, Empty } from '../components/common.jsx';
-import { queueStore } from './scanQueue.js';
+import { queueStore, isUnfinishedScan } from './scanQueue.js';
 import { useQueue, SCAN_OP, SCAN_STATE, RESOLUTION_LABEL, toLocalInput } from './useQueue.js';
 import { fmtLocal, fmtClock, batchShort } from './ui.js';
 import ConflictModal from './ConflictModal.jsx';
@@ -102,7 +102,10 @@ function BatchBar({ op, scans, batches }) {
   const currentId = localStorage.getItem(`hh_active_batch_${op}`);
   const current = batches.find((b) => b.id === currentId && b.op === op) || opBatches.find((b) => !b.closed);
   const mine = scans.filter((s) => s.batch_id === current?.id);
-  const unfinished = current ? queueStore.batchUnfinished(current.id) : false;
+  const unfinished = current ? mine.some(isUnfinishedScan) : false;
+  const conflictOpen = mine.filter((s) => s.state === 'conflict' && !s.resolution).length;
+  const keptOpen = mine.filter((s) => s.state === 'conflict' && s.resolution === 'kept').length;
+  const pendingN = mine.filter((s) => s.state === 'pending' || s.state === 'error').length;
 
   const close = async () => {
     const r = await queueStore.closeBatch(current.id);
@@ -117,8 +120,9 @@ function BatchBar({ op, scans, batches }) {
       <span className="text-muted">当前批次</span>
       <b className="mono">#{batchShort(current.id)}</b>
       <span className="text-muted">
-        本批 {mine.length} 扫 · 待补 {mine.filter((s) => s.state === 'pending' || s.state === 'error').length}
-        {' · '}冲突 {mine.filter((s) => s.state === 'conflict' && !s.resolution).length}
+        本批 {mine.length} 扫 · 待补 {pendingN}
+        {' · '}未处理冲突 {conflictOpen}
+        {keptOpen > 0 && <span style={{ color: 'var(--amber)' }}> · 暂留 {keptOpen}</span>}
       </span>
       <select
         className="input hh-batch-select"
@@ -137,7 +141,7 @@ function BatchBar({ op, scans, batches }) {
       <button className="btn btn-sm btn-danger" disabled={unfinished} onClick={close}>
         <Square size={11} /> 关闭批次
       </button>
-      {unfinished && <span className="text-muted">存在未完成扫描，暂不能关闭</span>}
+      {unfinished && <span className="text-muted">存在待补传、未处理或暂留的扫描，批次暂不能关闭</span>}
     </div>
   );
 }
@@ -246,16 +250,22 @@ function ScanRow({ s, onConflict }) {
       <td className="text-muted">{s.device_id}</td>
       <td>
         {s.state === 'conflict' ? (
-          <button className="btn btn-sm btn-danger" onClick={() => onConflict(s)}>
-            <AlertOctagon size={12} /> {SCAN_STATE.conflict.label}
-          </button>
+          <>
+            <button
+              className={`btn btn-sm ${s.resolution === 'kept' ? 'btn-next' : 'btn-danger'}`}
+              onClick={() => onConflict(s)}
+            >
+              <AlertOctagon size={12} />
+              {!s.resolution ? '冲突暂停 · 去处理' : '修改处理方式'}
+            </button>
+            <div className="text-muted" style={{ marginTop: 3, maxWidth: 230 }}>
+              {s.resolution
+                ? <>{RESOLUTION_LABEL[s.resolution]}{s.resolution_synced ? '' : '（待回传）'}</>
+                : (s.conflict_message || s.result?.message || '与服务器状态冲突')}
+            </div>
+          </>
         ) : (
           <Badge conf={stateConf} />
-        )}
-        {s.state === 'conflict' && s.resolution && (
-          <div className="text-muted" style={{ marginTop: 3 }}>
-            {RESOLUTION_LABEL[s.resolution]}{s.resolution_synced ? '' : '（待回传）'}
-          </div>
         )}
         {s.state === 'applied' && s.result?.replayed && (
           <div className="text-muted" style={{ marginTop: 3 }}>重复补传已自动忽略</div>
@@ -284,7 +294,7 @@ function QueuePanel({ scans, tab, onConflict }) {
 
   const clear = async () => {
     const n = await queueStore.clearFinished();
-    toast(`已清理 ${n} 条已完成记录`, 'success');
+    toast(n ? `已清理 ${n} 条已完成记录（暂留项保留）` : '没有可清理的记录（暂留/未完成的会保留）', n ? 'success' : 'info');
   };
 
   return (
@@ -346,18 +356,21 @@ export default function Handheld() {
   }, [toast]);
 
   // 自动补传后，若新出现冲突可直接打开最新一条（仅在队列视图提示，不打断扫描）
+  // 统计口径：暂留（kept）始终属于挂起事项，计入「冲突暂停」与未完成角标
   const counts = useMemo(() => {
     const c = { pending: 0, applied: 0, conflict: 0, error: 0, todo: 0 };
     for (const s of snap.scans) {
       if (s.state === 'pending') c.pending += 1;
       else if (s.state === 'error') c.error += 1;
       else if (s.state === 'conflict') {
-        if (s.resolution) {
-          // 已有处理结论（待回传）不计入冲突数角标
-        } else c.conflict += 1;
+        if (s.resolution === 'discarded' || s.resolution === 'retried') {
+          if (!s.resolution_synced) c.pending += 1; // 结论待回传
+        } else {
+          c.conflict += 1; // 未处理 或 选择暂留
+        }
       } else if (s.state === 'applied') c.applied += 1;
     }
-    c.todo = c.pending + c.error;
+    c.todo = snap.scans.filter((s) => s.state === 'pending' || s.state === 'error').length;
     return c;
   }, [snap.scans]);
 

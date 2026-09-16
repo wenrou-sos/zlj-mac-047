@@ -7,6 +7,9 @@ import { api, pingServer } from '../api.js';
 import { getDevice, makeScanId } from './device.js';
 import * as db from './offlineStore.js';
 
+// 同一运单的合法作业链顺序（与服务端一致）：到件 → 分拣 → 装车
+const OP_RANK = { arrive: 0, sort: 1, load: 2 };
+
 const LS_LAST_SYNC = 'hh_last_sync_at';
 const LS_VEHICLES = 'hh_vehicles_cache';
 
@@ -107,16 +110,27 @@ async function refreshVehicles() {
 }
 
 function hasUnfinished() {
-  return scans.some(
-    (s) => s.state === 'pending' || s.state === 'error' || (s.state === 'conflict' && !s.resolution)
-  );
+  return scans.some(isUnfinishedScan);
 }
 
-// 未完成扫描数（导航角标）：待补传 + 失败 + 未处理冲突；已放弃/已重扫不算
+// 未完成（仍需人工/补传跟进）：
+//  - pending 待补传 / error 补传失败
+//  - 冲突未选择处理方式
+//  - 冲突选择「暂留」——挂起事项，批次不能关、记录不能清
+//  - 已选放弃/重扫但结论尚未回传服务器
+export function isUnfinishedScan(s) {
+  if (s.state === 'pending' || s.state === 'error') return true;
+  if (s.state === 'conflict') {
+    if (!s.resolution) return true;
+    if (s.resolution === 'kept') return true;
+    if (!s.resolution_synced) return true;
+  }
+  return false;
+}
+
+// 未完成扫描数（导航角标 / 统计卡）：暂留项始终计入
 function pendingCount() {
-  return scans.filter(
-    (s) => s.state === 'pending' || s.state === 'error' || (s.state === 'conflict' && !s.resolution)
-  ).length;
+  return scans.filter(isUnfinishedScan).length;
 }
 
 // ── 批次 ──
@@ -166,15 +180,9 @@ function setActiveBatch(op, id) {
   emit();
 }
 
-// 批次是否可关闭：所有扫描均已记账，或冲突已有结论（放弃/重扫且结论已回传，暂留除外）
+// 批次是否可关闭：无未完成扫描（暂留的冲突项视为未完成，批次不可关闭）
 function batchUnfinished(batchId) {
-  return scans.some(
-    (s) =>
-      s.batch_id === batchId &&
-      (s.state === 'pending' ||
-        s.state === 'error' ||
-        (s.state === 'conflict' && (!s.resolution || (s.resolution !== 'kept' && !s.resolution_synced))))
-  );
+  return scans.some((s) => s.batch_id === batchId && isUnfinishedScan(s));
 }
 
 async function closeBatch(batchId) {
@@ -254,14 +262,24 @@ async function resolveConflict(scanId, resolution) {
   if (syncState.online) scheduleSync(400);
 }
 
-// 已记账 / 冲突已处理（结论已回传）的本地记录可清理（服务器台账不受影响）
+// 可从本地清理：已记账；或冲突已选择放弃/重扫（非暂留）且结论已回传服务器
+function isClearedScan(s) {
+  if (s.state === 'applied') return true;
+  if (
+    s.state === 'conflict' &&
+    s.resolution &&
+    s.resolution !== 'kept' &&
+    s.resolution_synced
+  ) return true;
+  return false;
+}
+
+// 冲突已了结（放弃/重扫）的本地记录可清理（服务器台账不受影响）；暂留项不可清理
 async function removeRecord(scanId) {
   const s = scans.find((x) => x.scan_id === scanId);
   if (!s) return;
-  const canRemove =
-    s.state === 'applied' || (s.state === 'conflict' && s.resolution && s.resolution_synced);
-  if (!canRemove) {
-    return { ok: false, error: '未完成或冲突结论尚未回传的扫描不能删除' };
+  if (!isClearedScan(s)) {
+    return { ok: false, error: '未完成或仍在暂留的扫描不能删除' };
   }
   await db.deleteScan(scanId);
   scans = scans.filter((x) => x.scan_id !== scanId);
@@ -270,10 +288,7 @@ async function removeRecord(scanId) {
 }
 
 async function clearFinished() {
-  // 已记账、冲突已有结论（放弃/暂留/重扫）且结论已回传服务器的，本地可清理；服务器台账仍保留
-  const done = scans.filter(
-    (s) => s.state === 'applied' || (s.state === 'conflict' && s.resolution && s.resolution_synced)
-  );
+  const done = scans.filter(isClearedScan);
   for (const s of done) await db.deleteScan(s.scan_id);
   scans = scans.filter((s) => !done.includes(s));
   emit();
@@ -292,7 +307,21 @@ async function syncNow(silent = false) {
     return { ok: false, offline: true };
   }
 
-  const toSend = scans.filter((s) => s.state === 'pending' || s.state === 'error');
+  const toSend = scans
+    .filter((s) => s.state === 'pending' || s.state === 'error')
+    // 与服务端保持同一稳定顺序：同一运单按 到件→分拣→装车 作业链重放，
+    // 避免本地倒序展示导致「装车先到、包裹还没到件」而把合法连续作业误判为冲突
+    .slice()
+    .sort((a, b) => {
+      if (a.tracking_no !== b.tracking_no) return a.tracking_no < b.tracking_no ? -1 : 1;
+      const ra = OP_RANK[a.op] ?? 9;
+      const rb = OP_RANK[b.op] ?? 9;
+      if (ra !== rb) return ra - rb;
+      const oa = Date.parse(a.occurred_at) || 0;
+      const ob = Date.parse(b.occurred_at) || 0;
+      if (oa !== ob) return oa - ob;
+      return a.scan_id < b.scan_id ? -1 : 1;
+    });
   const resolutions = scans
     .filter((s) => s.resolution && !s.resolution_synced)
     .map((s) => ({ scan_id: s.scan_id, resolution: s.resolution }));

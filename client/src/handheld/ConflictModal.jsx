@@ -62,27 +62,31 @@ export default function ConflictModal({ scan, onResolve, onClose }) {
         </div>
       </div>
 
-      {scan.resolution ? (
+      {scan.resolution && (
         <div className="conflict-resolved">
-          已选择：{RESOLUTION_LABEL[scan.resolution] || scan.resolution}
-          {!scan.resolution_synced ? '（等待下次补传回传）' : '（已回传服务器）'}
+          当前处理：{RESOLUTION_LABEL[scan.resolution] || scan.resolution}
+          {!scan.resolution_synced ? '（待下次补传回传服务器）' : '（已回传服务器，仍可改选）'}
         </div>
-      ) : (
-        <div className="conflict-actions">
-          {choices.map((c) => (
+      )}
+      <div className="conflict-actions">
+        {choices.map((c) => {
+          const value = c.key === 'discard' ? 'discarded' : c.key === 'retry' ? 'retried' : 'kept';
+          const selected = scan.resolution === value;
+          return (
             <button
               key={c.key}
-              className={`btn conflict-btn ${c.key === 'discard' ? 'btn-danger' : c.key === 'retry' ? 'btn-primary' : ''}`}
-              onClick={() => onResolve(scan.scan_id, c.key === 'discard' ? 'discarded' : c.key === 'retry' ? 'retried' : 'kept')}
+              className={`btn conflict-btn ${c.key === 'discard' ? 'btn-danger' : c.key === 'retry' ? 'btn-primary' : ''} ${selected ? 'conflict-btn-selected' : ''}`}
+              onClick={() => onResolve(scan.scan_id, value)}
             >
               {c.key === 'discard' && <Ban size={14} />}
               {c.key === 'retry' && <ArrowRightCircle size={14} />}
               {c.key === 'keep' && <HelpCircle size={14} />}
               {c.label}
+              {selected && <span className="conflict-current">当前选择</span>}
             </button>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
     </Modal>
   );
 }

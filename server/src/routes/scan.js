@@ -10,6 +10,8 @@ import { query, withTransaction } from '../db.js';
 const router = Router();
 
 const OPS = ['arrive', 'sort', 'load'];
+// 同一运单在同一批次中的合法作业链顺序：到件 → 分拣 → 装车
+const OP_RANK = { arrive: 0, sort: 1, load: 2 };
 
 // 冲突时可供手持端展示的处理选择
 const CHOICES = {
@@ -293,19 +295,36 @@ router.post('/sync', async (req, res) => {
   // 先处理本次扫描（冲突也会立即落台账），再回传冲突处理结论，
   // 这样同一请求内"重扫 + 旧冲突放弃"也能正确落到旧条目上
   const results = [];
+
+  // 同一请求中可能包含同一条运单断网期间依次完成的 到件→分拣→装车 三条扫描，
+  // 而手持端本地队列是按扫描时间倒序展示的，补传数组可能为逆序。
+  // 这里对「首次提交」的扫描做稳定排序：按运单号归组、按作业链顺序与发生时间重放，
+  // 保证组内前一步（如到件建包）对后一步（装车）可见，不会把合法的连续作业误判成冲突。
+  // 已在台账中的扫描（重复补传）不参与排序，始终直接回放首次结果。
+  const freshScans = [];
   for (const s of scans) {
-    // 台账已存在（刷新页面/重复补传）：原样回放首次结果，绝不重复记账
-    const [existing] = await query(
-      'SELECT result FROM scan_ledger WHERE scan_id = $1',
-      [s?.scan_id]
-    );
+    const [existing] = await query('SELECT result FROM scan_ledger WHERE scan_id = $1', [s?.scan_id]);
     if (existing) {
-      const replayed = typeof existing.result === 'string'
-        ? JSON.parse(existing.result)
-        : existing.result;
+      const replayed = typeof existing.result === 'string' ? JSON.parse(existing.result) : existing.result;
       results.push({ ...replayed, replayed: true });
-      continue;
+    } else {
+      freshScans.push(s);
     }
+  }
+  freshScans.sort((a, b) => {
+    const ta = String(a.tracking_no || '');
+    const tb = String(b.tracking_no || '');
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    const ra = OP_RANK[a.op] ?? 9;
+    const rb = OP_RANK[b.op] ?? 9;
+    if (ra !== rb) return ra - rb;
+    const oa = a.occurred_at ? Date.parse(a.occurred_at) : 0;
+    const ob = b.occurred_at ? Date.parse(b.occurred_at) : 0;
+    if (oa !== ob) return oa - ob;
+    return String(a.scan_id) < String(b.scan_id) ? -1 : 1;
+  });
+
+  for (const s of freshScans) {
     // 每条扫描独立事务：单条失败不影响本批其他扫描
     try {
       results.push(await withTransaction((q) => processOne(q, s, now)));
@@ -319,11 +338,12 @@ router.post('/sync', async (req, res) => {
   }
 
   // 冲突人工处理结论回写（discarded 放弃 / kept 暂留 / retried 已重扫）
+  // 允许改选：暂留后经人工核对可以改为放弃或重扫
   for (const r of resolutions) {
     if (!r?.scan_id || !['discarded', 'kept', 'retried'].includes(r.resolution)) continue;
     await query(
       `UPDATE scan_ledger SET resolution = $1, resolved_at = NOW()
-       WHERE scan_id = $2 AND resolution IS NULL`,
+       WHERE scan_id = $2 AND status = 'conflict'`,
       [r.resolution, r.scan_id]
     );
   }
