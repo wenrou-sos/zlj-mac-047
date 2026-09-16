@@ -334,6 +334,33 @@ table.tbl { width: 100%; border-collapse: collapse; }
 }
 .operator-box input::placeholder { color: #475569; }
 .operator-box input:focus { border-color: var(--primary); }
+.operator-box .operator-user {
+  width: 100%;
+  margin-top: 6px;
+  display: flex; align-items: center; gap: 8px;
+  color: #e2e8f0;
+  font-size: 13px;
+}
+.operator-box .operator-user .mono { color: #64748b; font-size: 11px; }
+.operator-box .operator-user button {
+  margin-left: auto;
+  background: none; border: none; cursor: pointer;
+  color: #64748b; padding: 4px; border-radius: 5px;
+  display: flex; align-items: center;
+}
+.operator-box .operator-user button:hover { background: rgba(255, 255, 255, 0.08); color: #e2e8f0; }
+.operator-box .operator-error { width: 100%; margin-top: 6px; color: #f87171; font-size: 11px; }
+.operator-box .operator-login {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 0;
+  border: none; border-radius: 7px;
+  background: var(--primary);
+  color: #fff; font-size: 12px; font-weight: 600;
+  cursor: pointer;
+}
+.operator-box .operator-login:hover:not(:disabled) { background: var(--primary-dark); }
+.operator-box .operator-login:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── 工单页 ── */
 .wo-summary {

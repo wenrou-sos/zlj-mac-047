@@ -1,7 +1,11 @@
 // API 封装
 const request = async (url, options = {}) => {
+  const token = localStorage.getItem('token');
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     ...options,
   });
   const data = await res.json().catch(() => ({}));
@@ -10,6 +14,11 @@ const request = async (url, options = {}) => {
 };
 
 export const api = {
+  // 认证
+  login: (username, password) => request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  logout: () => request('/api/auth/logout', { method: 'POST' }),
+  me: () => request('/api/auth/me'),
+  users: () => request('/api/auth/users'),
   // 总览与预警
   overview: () => request('/api/overview'),
   alerts: () => request('/api/alerts'),
@@ -27,13 +36,13 @@ export const api = {
   sortPackage: (id) => request(`/api/packages/${id}/sort`, { method: 'POST' }),
   loadPackage: (id) => request(`/api/packages/${id}/load`, { method: 'POST' }),
   interceptPackage: (id, body) => request(`/api/packages/${id}/intercept`, { method: 'POST', body: JSON.stringify(body) }),
-  // 异常处置工单
+  // 异常处置工单（写操作身份由服务端会话决定，无需传操作人）
   workOrders: (params = {}) => {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
     return request(`/api/work-orders${qs ? `?${qs}` : ''}`);
   },
   workOrder: (id) => request(`/api/work-orders/${id}`),
-  claimWorkOrder: (id, body) => request(`/api/work-orders/${id}/claim`, { method: 'POST', body: JSON.stringify(body) }),
+  claimWorkOrder: (id) => request(`/api/work-orders/${id}/claim`, { method: 'POST', body: '{}' }),
   transferWorkOrder: (id, body) => request(`/api/work-orders/${id}/transfer`, { method: 'POST', body: JSON.stringify(body) }),
   addEvidence: (id, body) => request(`/api/work-orders/${id}/evidence`, { method: 'POST', body: JSON.stringify(body) }),
   submitConclusion: (id, body) => request(`/api/work-orders/${id}/submit`, { method: 'POST', body: JSON.stringify(body) }),

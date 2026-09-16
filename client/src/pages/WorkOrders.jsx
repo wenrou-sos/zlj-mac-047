@@ -4,7 +4,7 @@ import {
   UserCheck, ArrowRightLeft, Paperclip, Send, ShieldCheck, Ban,
 } from 'lucide-react';
 import { api } from '../api.js';
-import { useToast, useOperator } from '../App.jsx';
+import { useToast, useAuth } from '../App.jsx';
 import { Badge, Modal, Empty } from '../components/common.jsx';
 import { WORK_ORDER_STATUS, CONCLUSIONS, ABNORMAL_TYPES, WO_ACTIONS, fmtDateTime } from '../utils.js';
 
@@ -17,7 +17,7 @@ export default function WorkOrders() {
   const [filters, setFilters] = useState({ status: '', q: '' });
   const [detail, setDetail] = useState(null);
   const toast = useToast();
-  const { operator } = useOperator();
+  const { user } = useAuth();
 
   const load = useCallback(async () => {
     try {
@@ -177,7 +177,7 @@ export default function WorkOrders() {
       {detail && (
         <WorkOrderDetail
           detail={detail}
-          operator={operator}
+          user={user}
           onClose={() => setDetail(null)}
           onChanged={() => { openDetail(detail.id); load(); }}
         />
@@ -187,16 +187,22 @@ export default function WorkOrders() {
 }
 
 // 工单详情 + 办理操作
-function WorkOrderDetail({ detail: w, operator, onClose, onChanged }) {
+function WorkOrderDetail({ detail: w, user, onClose, onChanged }) {
   const toast = useToast();
+  const [users, setUsers] = useState([]);
   const [transferTo, setTransferTo] = useState('');
   const [evidence, setEvidence] = useState('');
   const [conclusion, setConclusion] = useState({ conclusion: 'repair_release', note: '', return_destination: '' });
   const [reviewNote, setReviewNote] = useState('');
 
+  // 转交对象从系统用户中选择
+  useEffect(() => {
+    api.users().then(setUsers).catch(() => {});
+  }, []);
+
   const act = async (fn, okMsg) => {
-    if (!operator) {
-      toast('请先在左侧边栏设置当前操作员', 'error');
+    if (!user) {
+      toast('请先在左侧边栏登录', 'error');
       return;
     }
     try {
@@ -212,8 +218,9 @@ function WorkOrderDetail({ detail: w, operator, onClose, onChanged }) {
     }
   };
 
-  const isAssignee = operator && w.assignee === operator;
-  const isSubmitter = operator && w.submitted_by === operator;
+  const me = user?.display_name;
+  const isAssignee = me && w.assignee === me;
+  const isSubmitter = me && w.submitted_by === me;
 
   return (
     <Modal
@@ -276,22 +283,22 @@ function WorkOrderDetail({ detail: w, operator, onClose, onChanged }) {
       </div>
 
       {/* 办理操作区 */}
-      {!operator && (
+      {!user && (
         <div className="alert-item warn" style={{ marginTop: 16, marginBottom: 0 }}>
           <span className="alert-icon"><Ban size={16} /></span>
-          <div className="alert-msg">请先在左侧边栏设置<b>当前操作员</b>，再办理工单。</div>
+          <div className="alert-msg">请先在左侧边栏<b>登录操作员账号</b>，再办理工单。</div>
         </div>
       )}
 
-      {operator && w.status === 'open' && (
+      {user && w.status === 'open' && (
         <div className="wo-actions">
-          <button className="btn btn-primary" onClick={() => act(() => api.claimWorkOrder(w.id, { operator }), '已认领该工单')}>
-            <UserCheck size={14} /> 认领（{operator}）
+          <button className="btn btn-primary" onClick={() => act(() => api.claimWorkOrder(w.id), '已认领该工单')}>
+            <UserCheck size={14} /> 认领（{me}）
           </button>
         </div>
       )}
 
-      {operator && w.status === 'processing' && (
+      {user && w.status === 'processing' && (
         <div className="wo-actions">
           {!isAssignee && (
             <div className="alert-item warn" style={{ marginBottom: 0 }}>
@@ -303,10 +310,15 @@ function WorkOrderDetail({ detail: w, operator, onClose, onChanged }) {
             <>
               <div className="wo-action-row">
                 <label><ArrowRightLeft size={13} /> 转交</label>
-                <input className="input" placeholder="转交给（姓名）" value={transferTo} onChange={(e) => setTransferTo(e.target.value)} />
+                <select className="input" value={transferTo} onChange={(e) => setTransferTo(e.target.value)}>
+                  <option value="">选择转交对象</option>
+                  {users.filter((u) => u.display_name !== me).map((u) => (
+                    <option key={u.username} value={u.display_name}>{u.display_name}（@{u.username}）</option>
+                  ))}
+                </select>
                 <button
-                  className="btn" disabled={!transferTo.trim()}
-                  onClick={() => act(() => api.transferWorkOrder(w.id, { operator, to: transferTo.trim() }), '已转交')}
+                  className="btn" disabled={!transferTo}
+                  onClick={() => act(() => api.transferWorkOrder(w.id, { to: transferTo }), '已转交')}
                 >转交</button>
               </div>
               <div className="wo-action-row">
@@ -314,7 +326,7 @@ function WorkOrderDetail({ detail: w, operator, onClose, onChanged }) {
                 <input className="input" placeholder="证据描述，如：现场照片、称重记录" value={evidence} onChange={(e) => setEvidence(e.target.value)} />
                 <button
                   className="btn" disabled={!evidence.trim()}
-                  onClick={() => act(() => api.addEvidence(w.id, { operator, content: evidence.trim() }), '证据已补充')}
+                  onClick={() => act(() => api.addEvidence(w.id, { content: evidence.trim() }), '证据已补充')}
                 >提交</button>
               </div>
               <div className="wo-action-row" style={{ alignItems: 'flex-start' }}>
@@ -343,7 +355,6 @@ function WorkOrderDetail({ detail: w, operator, onClose, onChanged }) {
                   className="btn btn-primary"
                   onClick={() => act(
                     () => api.submitConclusion(w.id, {
-                      operator,
                       conclusion: conclusion.conclusion,
                       conclusion_note: conclusion.note || undefined,
                       return_destination: conclusion.return_destination || undefined,
@@ -357,7 +368,7 @@ function WorkOrderDetail({ detail: w, operator, onClose, onChanged }) {
         </div>
       )}
 
-      {operator && w.status === 'pending_review' && (
+      {user && w.status === 'pending_review' && (
         <div className="wo-actions">
           {isSubmitter ? (
             <div className="alert-item warn" style={{ marginBottom: 0 }}>
@@ -374,11 +385,11 @@ function WorkOrderDetail({ detail: w, operator, onClose, onChanged }) {
               <div style={{ display: 'flex', gap: 8 }}>
                 <button
                   className="btn btn-primary"
-                  onClick={() => act(() => api.reviewWorkOrder(w.id, { operator, decision: 'approve', review_note: reviewNote || undefined }), '复核通过，工单结案')}
+                  onClick={() => act(() => api.reviewWorkOrder(w.id, { decision: 'approve', review_note: reviewNote || undefined }), '复核通过，工单结案')}
                 >通过</button>
                 <button
                   className="btn btn-danger"
-                  onClick={() => act(() => api.reviewWorkOrder(w.id, { operator, decision: 'reject', review_note: reviewNote || undefined }), '已驳回，退回继续处理')}
+                  onClick={() => act(() => api.reviewWorkOrder(w.id, { decision: 'reject', review_note: reviewNote || undefined }), '已驳回，退回继续处理')}
                 >驳回</button>
               </div>
             </div>

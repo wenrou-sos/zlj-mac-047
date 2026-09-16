@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, RefreshCw, Search, Ban, ClipboardList, PackageCheck, Forklift, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../api.js';
-import { useToast, useOperator } from '../App.jsx';
+import { useToast, useAuth } from '../App.jsx';
 import { Badge, Modal, Empty } from '../components/common.jsx';
 import { PACKAGE_STATUS, ABNORMAL_TYPES, fmtDateTime } from '../utils.js';
 
@@ -16,7 +16,7 @@ export default function Packages({ goWorkOrders }) {
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ tracking_no: '', destination: '', weight_kg: '' });
   const toast = useToast();
-  const { operator, setOperator } = useOperator();
+  const { user } = useAuth();
 
   const load = useCallback(async () => {
     try {
@@ -43,12 +43,12 @@ export default function Packages({ goWorkOrders }) {
   };
 
   const intercept = async () => {
-    if (!operator) {
-      toast('请先填写操作人', 'error');
+    if (!user) {
+      toast('请先在左侧边栏登录操作员账号', 'error');
       return;
     }
     await run(
-      () => api.interceptPackage(interceptTarget.id, { ...interceptForm, operator }),
+      () => api.interceptPackage(interceptTarget.id, interceptForm),
       `运单 ${interceptTarget.tracking_no} 已拦截，处置工单已生成`
     );
     setInterceptTarget(null);
@@ -226,7 +226,7 @@ export default function Packages({ goWorkOrders }) {
           footer={
             <>
               <button className="btn" onClick={() => setInterceptTarget(null)}>取消</button>
-              <button className="btn btn-danger" onClick={intercept}><Ban size={14} /> 确认拦截</button>
+              <button className="btn btn-danger" disabled={!user} onClick={intercept}><Ban size={14} /> 确认拦截</button>
             </>
           }
         >
@@ -237,8 +237,13 @@ export default function Packages({ goWorkOrders }) {
             </select>
           </div>
           <div className="form-row">
-            <label>操作人 *</label>
-            <input className="input" placeholder="登记人姓名" value={operator} onChange={(e) => setOperator(e.target.value.trim())} />
+            <label>登记人</label>
+            {user
+              ? <div style={{ fontWeight: 600 }}>{user.display_name}<span className="text-muted">（@{user.username}）</span></div>
+              : <div className="alert-item warn" style={{ marginBottom: 0 }}>
+                  <span className="alert-icon"><Ban size={16} /></span>
+                  <div className="alert-msg">请先在左侧边栏<b>登录操作员账号</b>，再登记拦截。</div>
+                </div>}
           </div>
           <div className="form-row">
             <label>备注说明</label>

@@ -87,6 +87,14 @@ CREATE INDEX IF NOT EXISTS idx_work_orders_package ON work_orders(package_id);
 CREATE INDEX IF NOT EXISTS idx_work_orders_status  ON work_orders(status);
 CREATE INDEX IF NOT EXISTS idx_wo_events_order     ON work_order_events(work_order_id);
 
+-- 操作用户：工单认领/提交/复核等动作的身份来源（服务端会话，非客户端自报）
+CREATE TABLE IF NOT EXISTS users (
+  username      VARCHAR(30) PRIMARY KEY,
+  display_name  VARCHAR(50) NOT NULL,
+  password_hash VARCHAR(64) NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- 超时规则配置（分钟），可在页面上调整
 CREATE TABLE IF NOT EXISTS settings (
   key   VARCHAR(50) PRIMARY KEY,

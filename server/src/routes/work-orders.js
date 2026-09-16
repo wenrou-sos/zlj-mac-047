@@ -1,6 +1,8 @@
 // 异常处置工单路由：认领、转交、补充证据、提交结论、复核
+// 所有写操作要求登录，操作人身份取自服务端会话（req.user），不接受客户端自报
 import { Router } from 'express';
 import { query } from '../db.js';
+import { requireUser } from '../auth.js';
 import { OPEN_WO_STATUSES, CONCLUSION_LABEL } from '../helpers.js';
 
 const router = Router();
@@ -70,10 +72,8 @@ router.get('/:id', async (req, res) => {
 });
 
 // 认领：待认领 → 处理中
-router.post('/:id/claim', async (req, res) => {
-  const operator = (req.body?.operator || '').trim();
-  if (!operator) return res.status(400).json({ error: '请填写操作人' });
-
+router.post('/:id/claim', requireUser, async (req, res) => {
+  const operator = req.user.display_name;
   const [wo] = await query('SELECT * FROM work_orders WHERE id = $1', [req.params.id]);
   if (!wo) return res.status(404).json({ error: '工单不存在' });
   if (wo.status !== 'open') return res.status(409).json({ error: '仅待认领工单可认领' });
@@ -87,18 +87,20 @@ router.post('/:id/claim', async (req, res) => {
   res.json(rows[0]);
 });
 
-// 转交：处理中 → 处理中（仅当前处理人可转交）
-router.post('/:id/transfer', async (req, res) => {
-  const operator = (req.body?.operator || '').trim();
+// 转交：处理中 → 处理中（仅当前处理人可转交，转交对象须为系统用户）
+router.post('/:id/transfer', requireUser, async (req, res) => {
+  const operator = req.user.display_name;
   const to = (req.body?.to || '').trim();
-  if (!operator) return res.status(400).json({ error: '请填写操作人' });
-  if (!to) return res.status(400).json({ error: '请填写转交对象' });
+  if (!to) return res.status(400).json({ error: '请选择转交对象' });
   if (to === operator) return res.status(400).json({ error: '不能转交给自己' });
 
   const [wo] = await query('SELECT * FROM work_orders WHERE id = $1', [req.params.id]);
   if (!wo) return res.status(404).json({ error: '工单不存在' });
   if (wo.status !== 'processing') return res.status(409).json({ error: '仅处理中的工单可转交' });
   if (wo.assignee !== operator) return res.status(409).json({ error: '仅当前处理人可转交该工单' });
+
+  const [target] = await query('SELECT display_name FROM users WHERE display_name = $1', [to]);
+  if (!target) return res.status(400).json({ error: '转交对象不是系统用户' });
 
   const rows = await query(
     `UPDATE work_orders SET assignee = $1 WHERE id = $2 RETURNING *`,
@@ -109,10 +111,9 @@ router.post('/:id/transfer', async (req, res) => {
 });
 
 // 补充证据：处理中，可多次补充
-router.post('/:id/evidence', async (req, res) => {
-  const operator = (req.body?.operator || '').trim();
+router.post('/:id/evidence', requireUser, async (req, res) => {
+  const operator = req.user.display_name;
   const content = (req.body?.content || '').trim();
-  if (!operator) return res.status(400).json({ error: '请填写操作人' });
   if (!content) return res.status(400).json({ error: '请填写证据内容' });
 
   const [wo] = await query('SELECT * FROM work_orders WHERE id = $1', [req.params.id]);
@@ -125,10 +126,9 @@ router.post('/:id/evidence', async (req, res) => {
 });
 
 // 提交处理结论：处理中 → 待复核
-router.post('/:id/submit', async (req, res) => {
+router.post('/:id/submit', requireUser, async (req, res) => {
+  const operator = req.user.display_name;
   const { conclusion, conclusion_note, return_destination } = req.body || {};
-  const operator = (req.body?.operator || '').trim();
-  if (!operator) return res.status(400).json({ error: '请填写操作人' });
   if (!CONCLUSION_LABEL[conclusion]) return res.status(400).json({ error: '请选择处理结论' });
   if (conclusion === 'return' && !(return_destination || '').trim()) {
     return res.status(400).json({ error: '结论为退回时必须填写退回去向' });
@@ -153,10 +153,10 @@ router.post('/:id/submit', async (req, res) => {
 });
 
 // 复核：待复核 → 已结案（通过）/ 处理中（驳回，继续处理）
-router.post('/:id/review', async (req, res) => {
+// 提交人与复核人不能是同一人（以服务端会话身份为准）
+router.post('/:id/review', requireUser, async (req, res) => {
+  const operator = req.user.display_name;
   const { decision, review_note } = req.body || {};
-  const operator = (req.body?.operator || '').trim();
-  if (!operator) return res.status(400).json({ error: '请填写操作人' });
   if (!['approve', 'reject'].includes(decision)) {
     return res.status(400).json({ error: '复核决定必须为 approve（通过）或 reject（驳回）' });
   }
@@ -164,7 +164,6 @@ router.post('/:id/review', async (req, res) => {
   const [wo] = await query('SELECT * FROM work_orders WHERE id = $1', [req.params.id]);
   if (!wo) return res.status(404).json({ error: '工单不存在' });
   if (wo.status !== 'pending_review') return res.status(409).json({ error: '仅待复核工单可复核' });
-  // 提交人与复核人不能是同一人
   if (wo.submitted_by === operator) {
     return res.status(409).json({ error: '提交人与复核人不能是同一人' });
   }
@@ -203,7 +202,9 @@ async function applyConclusion(wo, reviewer) {
   if (!pkg) return '包裹不存在';
 
   if (wo.conclusion === 'repair_release') {
-    // 修复放行：尚有其他未结工单时不能恢复装车，继续留置
+    // 修复放行需同时满足：
+    // 1. 该包裹无其他未结工单（否则继续留置）
+    // 2. 该包裹没有其他工单结论为「继续隔离」（否则隔离结论会被架空，禁止放行）
     const [{ count }] = await query(
       `SELECT COUNT(*)::int AS count FROM work_orders
        WHERE package_id = $1 AND id <> $2 AND status IN ('open','processing','pending_review')`,
@@ -211,6 +212,14 @@ async function applyConclusion(wo, reviewer) {
     );
     if (count > 0) {
       return `该包裹尚有 ${count} 张未结工单，继续留置拦截，待全部结案后方可装车`;
+    }
+    const [{ count: isolateCount }] = await query(
+      `SELECT COUNT(*)::int AS count FROM work_orders
+       WHERE package_id = $1 AND id <> $2 AND status = 'closed' AND conclusion = 'isolate'`,
+      [pkg.id, wo.id]
+    );
+    if (isolateCount > 0) {
+      return `该包裹有 ${isolateCount} 张已结案工单结论为「继续隔离」，禁止放行；如需出库请登记退回工单`;
     }
     if (pkg.status === 'intercepted') {
       const backTo = pkg.sorted_at ? 'sorted' : 'pending';

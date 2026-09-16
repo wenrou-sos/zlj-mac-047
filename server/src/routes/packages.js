@@ -1,6 +1,7 @@
 // 包裹路由：查询、分拣、装车、异常拦截（生成处置工单）
 import { Router } from 'express';
 import { query } from '../db.js';
+import { requireUser } from '../auth.js';
 
 const router = Router();
 
@@ -97,11 +98,11 @@ router.post('/:id/load', async (req, res) => {
 });
 
 // 异常拦截：每次拦截生成一张独立处置工单（同一包裹多次异常分别留档）
-router.post('/:id/intercept', async (req, res) => {
+// 需登录，登记人取自服务端会话
+router.post('/:id/intercept', requireUser, async (req, res) => {
   const { abnormal_type, note } = req.body || {};
-  const operator = (req.body?.operator || '').trim();
+  const operator = req.user.display_name;
   if (!abnormal_type) return res.status(400).json({ error: '请选择异常类型' });
-  if (!operator) return res.status(400).json({ error: '请填写操作人' });
   const [pkg] = await query('SELECT * FROM packages WHERE id = $1', [req.params.id]);
   if (!pkg) return res.status(404).json({ error: '包裹不存在' });
   if (pkg.status === 'loaded') {

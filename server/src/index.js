@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { initSchema } from './schema.js';
 import { seedIfEmpty } from './seed.js';
+import authRouter, { ensureUsers } from './auth.js';
 import vehiclesRouter from './routes/vehicles.js';
 import packagesRouter from './routes/packages.js';
 import workOrdersRouter from './routes/work-orders.js';
@@ -14,6 +15,7 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+app.use('/api/auth', authRouter);
 app.use('/api/vehicles', vehiclesRouter);
 app.use('/api/packages', packagesRouter);
 app.use('/api/work-orders', workOrdersRouter);
@@ -28,6 +30,7 @@ app.use((err, req, res, next) => {
 });
 
 await initSchema();
+await ensureUsers();
 await seedIfEmpty();
 
 app.listen(PORT, () => {
