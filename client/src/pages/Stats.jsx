@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { RefreshCw, Save, Ban } from 'lucide-react';
+import { RefreshCw, Save, Ban, History } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   AreaChart, Area, CartesianGrid, Legend, Cell,
@@ -15,14 +15,16 @@ export default function Stats() {
   const [backlog, setBacklog] = useState(null);
   const [abnormal, setAbnormal] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [ruleHistory, setRuleHistory] = useState([]);
   const toast = useToast();
 
   const load = async () => {
     try {
-      const [b, a, s] = await Promise.all([api.backlog(), api.abnormalStats(), api.settings()]);
+      const [b, a, s, h] = await Promise.all([api.backlog(), api.abnormalStats(), api.settings(), api.settingsHistory()]);
       setBacklog(b);
       setAbnormal(a);
       setSettings(s);
+      setRuleHistory(h);
     } catch (e) {
       toast(e.message, 'error');
     }
@@ -32,13 +34,19 @@ export default function Stats() {
 
   const saveSettings = async () => {
     try {
-      const s = await api.saveSettings({
+      const body = {
         unload_timeout_min: Number(settings.unload_timeout_min),
         sort_timeout_min: Number(settings.sort_timeout_min),
         warn_ratio: Number(settings.warn_ratio),
-      });
+        response_timeout_min: Number(settings.response_timeout_min),
+        escalation_grace_min: Number(settings.escalation_grace_min),
+      };
+      if (body.warn_ratio <= 0 || body.warn_ratio > 1) return toast('预警阈值比例需在 0~1 之间', 'error');
+      const s = await api.saveSettings(body);
       setSettings(s);
-      toast('超时规则已保存，预警实时生效', 'success');
+      const h = await api.settingsHistory();
+      setRuleHistory(h);
+      toast('超时规则已保存：进行中事件按原规则执行，新事件按新规则触发', 'success');
     } catch (e) {
       toast(e.message, 'error');
     }
@@ -145,11 +153,23 @@ export default function Stats() {
               <input className="input" type="number" min="0.1" max="1" step="0.05" value={settings.warn_ratio}
                 onChange={(e) => setSettings({ ...settings, warn_ratio: e.target.value })} />
             </div>
+            <div className="form-row">
+              <label>响应期限（触发后多少分钟无人确认，自动升级主管）</label>
+              <input className="input" type="number" min="1" value={settings.response_timeout_min}
+                onChange={(e) => setSettings({ ...settings, response_timeout_min: e.target.value })} />
+            </div>
+            <div className="form-row">
+              <label>升级宽限（红色超时后多少分钟仍未恢复，主管督办）</label>
+              <input className="input" type="number" min="1" value={settings.escalation_grace_min}
+                onChange={(e) => setSettings({ ...settings, escalation_grace_min: e.target.value })} />
+            </div>
             <button className="btn btn-primary" onClick={saveSettings} style={{ width: '100%', justifyContent: 'center' }}>
               <Save size={14} /> 保存规则
             </button>
-            <div className="text-muted" style={{ marginTop: 10, lineHeight: 1.6 }}>
+            <div className="text-muted" style={{ marginTop: 10, lineHeight: 1.7 }}>
               超过时限标记为「已超时」（红色）；达到时限 {Math.round(settings.warn_ratio * 100)}% 标记为「预警」（黄色）。发车超时以计划发车时间为准。
+              <br />
+              <b>规则只对之后新触发的事件生效</b>；进行中的事件保留创建时的规则快照，每次调整都进入下方台账可追溯。
             </div>
           </div>
         </div>
@@ -208,6 +228,33 @@ export default function Stats() {
             </tbody>
           </table>
           {abnormal.recent.length === 0 && <Empty text="暂无异常件记录" />}
+        </div>
+      </div>
+
+      {/* 超时规则调整台账：阈值每次修改可追溯，事件按创建时的规则快照执行 */}
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="card-header">
+          <h3><History size={15} /> 超时规则调整台账</h3>
+          <span className="text-muted">进行中的事件按创建时快照执行；此处只记录规则版本变化</span>
+        </div>
+        <div className="table-wrap">
+          <table className="tbl">
+            <thead>
+              <tr><th>调整时间</th><th>规则项</th><th>原值</th><th>新值</th><th>操作人</th></tr>
+            </thead>
+            <tbody>
+              {ruleHistory.map((h) => (
+                <tr key={h.id}>
+                  <td className="mono text-muted">{fmtDateTime(h.created_at)}</td>
+                  <td style={{ fontWeight: 600 }}>{h.label}</td>
+                  <td className="mono">{h.old_value ?? '—'}</td>
+                  <td className="mono"><b>{h.new_value}</b></td>
+                  <td>{h.changed_by || <span className="text-muted">系统</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {ruleHistory.length === 0 && <Empty text="暂无规则调整记录（初始默认值未变更）" />}
         </div>
       </div>
     </div>

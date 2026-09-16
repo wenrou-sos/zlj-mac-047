@@ -2,8 +2,17 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { VEHICLE_FLOW } from '../helpers.js';
+import { reconcileAlerts } from '../alerts.js';
 
 const router = Router();
+
+const actorOf = (req) => {
+  let raw = String(req.get('x-user-name') || '').trim();
+  if (raw.includes('%')) {
+    try { raw = decodeURIComponent(raw).trim(); } catch { /* 保留原值 */ }
+  }
+  return raw.slice(0, 50) || 'system';
+};
 
 // 车辆列表（含包裹统计）
 router.get('/', async (req, res) => {
@@ -78,6 +87,10 @@ router.post('/:id/action/:action', async (req, res) => {
       [id]
     );
   }
+
+  // 状态推进后立即对账：完成环节 → 恢复关闭对应事件；
+  // 进入下一环节若超时 → 另起新事件；幂等，重复打卡不会重复生成
+  await reconcileAlerts({ actor: actorOf(req), vehicleId: id });
 
   res.json(rows[0]);
 });

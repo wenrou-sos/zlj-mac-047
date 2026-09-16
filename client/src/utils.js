@@ -24,6 +24,29 @@ export const ABNORMAL_TYPES = {
   address_issue: '地址信息异常',
 };
 
+// 预警事件环节
+export const STAGE_LABEL = { unload: '卸车', sort: '分拣', departure: '发车' };
+
+// 预警事件处理状态
+export const ALERT_STATUS = {
+  open:       { label: '待处理', color: '#b45309', bg: '#fef3c7' },
+  escalated:  { label: '主管待办', color: '#b91c1c', bg: '#fee2e2' },
+  resolved:   { label: '已处理·待恢复', color: '#1d4ed8', bg: '#dbeafe' },
+  recovered:  { label: '已恢复', color: '#15803d', bg: '#dcfce7' },
+};
+
+// 事件台账动作
+export const ALERT_LOG_LABEL = {
+  trigger: '首次触发',
+  overdue: '升级红色超时',
+  escalated: '自动升级主管',
+  claim: '认领确认',
+  comment: '处理记录',
+  resolve: '标记处理',
+  reassign: '主管改派',
+  recovered: '车辆恢复',
+};
+
 export const fmtTime = (t) => {
   if (!t) return '—';
   const d = new Date(t);

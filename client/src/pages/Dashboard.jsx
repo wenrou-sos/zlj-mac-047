@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Truck, Package, PackageCheck, Ban, AlertTriangle, AlertOctagon, RefreshCw, ArrowRight, Clock } from 'lucide-react';
+import { Truck, Package, PackageCheck, Ban, AlertTriangle, RefreshCw, ArrowRight, Clock, Hand, ShieldAlert } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
-import { StatCard, Empty } from '../components/common.jsx';
-import { fmtAgo } from '../utils.js';
+import { StatCard, Empty, Badge } from '../components/common.jsx';
+import { ALERT_STATUS, fmtAgo, fmtDateTime } from '../utils.js';
 
 const PIE_COLORS = { pending: '#f59e0b', sorted: '#8b5cf6', loaded: '#22c55e', intercepted: '#ef4444' };
 const PIE_LABEL = { pending: '待分拣', sorted: '已分拣', loaded: '已装车', intercepted: '已拦截' };
 
-export default function Dashboard({ onAlertCount, goVehicles }) {
+export default function Dashboard({ onAlertCount, goAlerts, goVehicles }) {
   const [overview, setOverview] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [updatedAt, setUpdatedAt] = useState(null);
@@ -17,10 +17,9 @@ export default function Dashboard({ onAlertCount, goVehicles }) {
 
   const load = async () => {
     try {
-      const [ov, al] = await Promise.all([api.overview(), api.alerts()]);
+      const [ov, al] = await Promise.all([api.overview(), api.alerts('active')]);
       setOverview(ov);
       setAlerts(al);
-      onAlertCount(al.length);
       setUpdatedAt(new Date());
     } catch (e) {
       toast(e.message, 'error');
@@ -36,6 +35,7 @@ export default function Dashboard({ onAlertCount, goVehicles }) {
   if (!overview) return <div className="empty">加载中…</div>;
 
   const pkg = overview.packages;
+  const a = overview.alerts;
   const pieData = ['pending', 'sorted', 'loaded', 'intercepted']
     .map((k) => ({ key: k, name: PIE_LABEL[k], value: pkg[k] }))
     .filter((d) => d.value > 0);
@@ -60,34 +60,49 @@ export default function Dashboard({ onAlertCount, goVehicles }) {
         <StatCard icon={<Ban size={22} />} label="拦截异常件" value={pkg.intercepted} iconBg="#fee2e2" iconColor="#b91c1c" />
         <StatCard
           icon={<AlertTriangle size={22} />}
-          label="超时预警"
-          value={overview.alert_count}
-          iconBg={overview.overdue_count > 0 ? '#fee2e2' : '#fef3c7'}
-          iconColor={overview.overdue_count > 0 ? '#b91c1c' : '#b45309'}
+          label="未恢复预警事件"
+          value={a.alert_count}
+          iconBg={a.escalated_count > 0 ? '#fee2e2' : '#fef3c7'}
+          iconColor={a.escalated_count > 0 ? '#b91c1c' : '#b45309'}
         />
       </div>
 
       <div className="grid-32">
         <div className="card section-gap">
           <div className="card-header">
-            <h3><AlertOctagon size={16} color="#dc2626" /> 超时预警</h3>
-            <button className="btn btn-sm" onClick={goVehicles}>
-              前往处理 <ArrowRight size={13} />
+            <h3>
+              {a.escalated_count > 0 && <ShieldAlert size={16} color="#dc2626" className="pulse" />}
+              超时预警事件
+              <span className="text-muted" style={{ fontWeight: 400 }}>
+                待认领 {a.unassigned_count} · 主管待办 {a.escalated_count} · 已处理待恢复 {a.resolved_waiting}
+              </span>
+            </h3>
+            <button className="btn btn-sm" onClick={goAlerts}>
+              前往认领处理 <ArrowRight size={13} />
             </button>
           </div>
           <div className="card-body">
             {alerts.length === 0 ? (
-              <Empty text="当前无超时预警，作业正常" />
+              <Empty text="当前无未恢复预警，作业正常" />
             ) : (
-              alerts.map((a, i) => (
-                <div key={i} className={`alert-item ${a.level}`}>
+              alerts.map((ev) => (
+                <div key={ev.id} className={`alert-item ${ev.level === 'overdue' ? 'overdue' : 'warn'}`} onClick={goAlerts}>
                   <span className="alert-icon">
-                    {a.level === 'overdue' ? <AlertOctagon size={18} /> : <Clock size={18} />}
+                    {ev.level === 'overdue' ? <AlertTriangle size={18} /> : <Clock size={18} />}
                   </span>
                   <div className="alert-msg">
-                    <b>{a.plate_no}</b>（{a.route_code}）{a.message}
+                    <div>
+                      <b>{ev.plate_no}</b>（{ev.route_code}）{ev.message}
+                    </div>
+                    <div className="alert-sub">
+                      <Badge conf={ALERT_STATUS[ev.status]} />
+                      <span>首次触发 {fmtDateTime(ev.first_triggered_at)}（{fmtAgo(ev.first_triggered_at)}）</span>
+                      {ev.assigned_to
+                        ? <span className="assignee">跟进人：{ev.assigned_to}</span>
+                        : <span className="unassigned"><Hand size={11} /> 待认领</span>}
+                    </div>
                   </div>
-                  <span className="alert-level">{a.level === 'overdue' ? '已超时' : '预警'}</span>
+                  <span className="alert-level">{ev.level === 'overdue' ? '已超时' : '预警'}</span>
                 </div>
               ))
             )}

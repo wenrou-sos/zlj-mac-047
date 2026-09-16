@@ -1,81 +1,19 @@
-// 共享业务逻辑：超时预警计算
+// 共享业务逻辑：超时规则、状态机定义
 import { query } from './db.js';
 
 export async function getSettings() {
   const rows = await query('SELECT key, value::float AS value FROM settings');
   const s = Object.fromEntries(rows.map((r) => [r.key, r.value]));
   return {
-    unload_timeout_min: s.unload_timeout_min ?? 30,
-    sort_timeout_min: s.sort_timeout_min ?? 60,
-    warn_ratio: s.warn_ratio ?? 0.8,
+    unload_timeout_min: s.unload_timeout_min ?? 30,   // 到车后完成卸车时限
+    sort_timeout_min: s.sort_timeout_min ?? 60,       // 卸完后完成分拣时限
+    warn_ratio: s.warn_ratio ?? 0.8,                  // 达到时限比例触发黄色预警
+    response_timeout_min: s.response_timeout_min ?? 15, // 响应期限：无人确认自动升级主管
+    escalation_grace_min: s.escalation_grace_min ?? 15, // 红色超时后未恢复宽限
   };
 }
 
-const STAGE_LABEL = { unload: '卸车', sort: '分拣', departure: '发车' };
-
-/**
- * 对车辆列表计算超时预警
- * 规则：
- *  - 卸车：到车后 unload_timeout_min 分钟内未完成卸车
- *  - 分拣：卸车完成后 sort_timeout_min 分钟内未完成分拣
- *  - 发车：超过计划发车时间仍未发车
- *  达到时限 warn_ratio（默认80%）触发黄色预警，超过时限为红色超时
- */
-export function computeAlerts(vehicles, settings, now = new Date()) {
-  const alerts = [];
-  const { unload_timeout_min, sort_timeout_min, warn_ratio } = settings;
-
-  const push = (v, stage, elapsedMin, limitMin) => {
-    const overdue = elapsedMin > limitMin;
-    const warn = !overdue && elapsedMin >= limitMin * warn_ratio;
-    if (!overdue && !warn) return;
-    alerts.push({
-      vehicle_id: v.id,
-      plate_no: v.plate_no,
-      route_code: v.route_code,
-      stage,
-      stage_label: STAGE_LABEL[stage],
-      level: overdue ? 'overdue' : 'warn',
-      elapsed_min: Math.round(elapsedMin),
-      limit_min: limitMin,
-      message: overdue
-        ? `${STAGE_LABEL[stage]}已超时 ${Math.round(elapsedMin - limitMin)} 分钟`
-        : `${STAGE_LABEL[stage]}即将超时（已用时 ${Math.round(elapsedMin)}/${limitMin} 分钟）`,
-    });
-  };
-
-  for (const v of vehicles) {
-    if (v.status === 'departed' || v.status === 'expected') continue;
-
-    // 卸车环节：已到车但卸车未完成
-    if (!v.unload_end_at && v.arrived_at) {
-      push(v, 'unload', (now - new Date(v.arrived_at)) / 60_000, unload_timeout_min);
-    }
-    // 分拣环节：卸车完成但分拣未完成
-    if (v.unload_end_at && !v.sort_end_at) {
-      push(v, 'sort', (now - new Date(v.unload_end_at)) / 60_000, sort_timeout_min);
-    }
-    // 发车环节：超过计划发车时间
-    if (v.planned_departure && !v.departed_at) {
-      const elapsed = (now - new Date(v.planned_departure)) / 60_000;
-      if (elapsed > 0) {
-        alerts.push({
-          vehicle_id: v.id,
-          plate_no: v.plate_no,
-          route_code: v.route_code,
-          stage: 'departure',
-          stage_label: STAGE_LABEL.departure,
-          level: 'overdue',
-          elapsed_min: Math.round(elapsed),
-          limit_min: 0,
-          message: `已超过计划发车时间 ${Math.round(elapsed)} 分钟`,
-        });
-      }
-    }
-  }
-  // 超时优先，按超时时长降序
-  return alerts.sort((a, b) => (a.level === b.level ? b.elapsed_min - a.elapsed_min : a.level === 'overdue' ? -1 : 1));
-}
+export const STAGE_LABEL = { unload: '卸车', sort: '分拣', departure: '发车' };
 
 // 车辆状态机定义
 export const VEHICLE_FLOW = {

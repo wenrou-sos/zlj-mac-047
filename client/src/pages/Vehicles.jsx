@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Truck, Check, ArrowRight, Trash2, AlertOctagon } from 'lucide-react';
+import { Plus, RefreshCw, Truck, Check, ArrowRight, Trash2, Hand, ShieldAlert } from 'lucide-react';
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
 import { Badge, Modal, Empty } from '../components/common.jsx';
@@ -40,7 +40,7 @@ function Timeline({ v }) {
   );
 }
 
-export default function Vehicles() {
+export default function Vehicles({ goAlerts }) {
   const [vehicles, setVehicles] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [filter, setFilter] = useState('');
@@ -50,7 +50,8 @@ export default function Vehicles() {
 
   const load = async () => {
     try {
-      const [vs, al] = await Promise.all([api.vehicles(), api.alerts()]);
+      // alerts 为未恢复的预警事件（可认领、可追溯），一辆车同一环节至多一条
+      const [vs, al] = await Promise.all([api.vehicles(), api.alerts('active')]);
       setVehicles(vs);
       setAlerts(al);
     } catch (e) {
@@ -64,13 +65,23 @@ export default function Vehicles() {
     return () => clearInterval(timer);
   }, []);
 
+  // 取车辆当前最严重的未恢复事件（红色超时优先、升级优先）
   const alertMap = useMemo(() => {
     const m = {};
-    for (const a of alerts) {
-      if (!m[a.vehicle_id] || a.level === 'overdue') m[a.vehicle_id] = a;
+    const rank = (e) => (e.status === 'escalated' ? 3 : e.level === 'overdue' ? 2 : 1);
+    for (const e of alerts) {
+      if (!m[e.vehicle_id] || rank(e) > rank(m[e.vehicle_id])) m[e.vehicle_id] = e;
     }
     return m;
   }, [alerts]);
+
+  const quickClaim = async (ev) => {
+    try {
+      const r = await api.claimAlert(ev.id);
+      toast(r.claimed ? `已认领 ${ev.plate_no} 的预警` : '你已认领过该预警', r.claimed ? 'success' : 'info');
+      load();
+    } catch (err) { toast(err.message, 'error'); }
+  };
 
   const doAction = async (v) => {
     const next = NEXT_ACTION[v.status];
@@ -166,8 +177,21 @@ export default function Vehicles() {
                       <div style={{ fontWeight: 600 }}>{v.plate_no}</div>
                       <div className="text-muted">{v.route_code} · {v.driver_name || '未指派司机'}</div>
                       {alert && (
-                        <div style={{ color: alert.level === 'overdue' ? 'var(--red)' : 'var(--amber)', fontSize: 12, marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <AlertOctagon size={12} /> {alert.message}
+                        <div className="vehicle-alert" style={{ color: alert.level === 'overdue' ? 'var(--red)' : 'var(--amber)' }}>
+                          {alert.status === 'escalated'
+                            ? <ShieldAlert size={12} />
+                            : <AlertOctagon size={12} />}
+                          <span>{alert.message}</span>
+                          {alert.assigned_to
+                            ? <em className="alert-assignee">跟进：{alert.assigned_to}</em>
+                            : (
+                              <button type="button" className="mini-claim" onClick={(e) => { e.stopPropagation(); quickClaim(alert); }}>
+                                <Hand size={11} /> 认领
+                              </button>
+                            )}
+                          {goAlerts && (
+                            <button type="button" className="mini-link" onClick={(e) => { e.stopPropagation(); goAlerts(); }}>详情</button>
+                          )}
                         </div>
                       )}
                     </td>
