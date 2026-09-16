@@ -104,7 +104,7 @@ export default function SortRules() {
         ? `格口 ${disableTarget.code} 已停用，改道已写入草稿，试算发布后生效`
         : `格口 ${disableTarget.code} 已停用`
     );
-    if (r) { setDisableTarget(null); setRerouteId(''); }
+    if (r) { setDisableTarget(null); setRerouteId(''); setSim(null); } // 格口状态变了，旧试算结果作废
   };
 
   const createChute = async () => {
@@ -314,8 +314,18 @@ export default function SortRules() {
               </div>
             </div>
 
-            {(sim.conflicts.length > 0 || sim.unmatched.length > 0) && (
+            {(sim.disabled_rules?.length > 0 || sim.conflicts.length > 0 || sim.unmatched.length > 0) && (
               <div style={{ marginTop: 14 }}>
+                {sim.disabled_rules?.length > 0 && (
+                  <div className="alert-item warn">
+                    <span className="alert-icon"><Ban size={16} /></span>
+                    <div className="alert-msg">
+                      <b>{sim.disabled_rules.length} 条草稿规则指向已停用格口</b>（
+                      {sim.disabled_rules.map((r) => `#${r.rule_id}→${r.chute_code}`).join('、')}
+                      ），试算中按落空处理；发布后这些规则在扫描时同样不生效。
+                    </div>
+                  </div>
+                )}
                 {sim.conflicts.length > 0 && (
                   <div className="alert-item warn">
                     <span className="alert-icon"><AlertTriangle size={16} /></span>
@@ -411,7 +421,7 @@ export default function SortRules() {
                         </button>
                       ) : (
                         <button className="btn btn-next btn-sm" disabled={busy}
-                          onClick={() => run(() => api.enableChute(c.id), `格口 ${c.code} 已启用`)}>
+                          onClick={() => run(() => api.enableChute(c.id), `格口 ${c.code} 已启用`).then((r) => r && setSim(null))}>
                           <CheckCircle2 size={13} /> 启用
                         </button>
                       )}

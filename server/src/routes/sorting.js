@@ -127,15 +127,17 @@ router.post('/chutes/:id/disable', async (req, res) => {
         [target.id, chute.id, draft.id]
       );
       rerouted = moved.length;
-      if (rerouted > 0) await invalidateSimulation(draft.id);
     }
   }
 
   await query(`UPDATE chutes SET status = 'disabled', disabled_at = NOW() WHERE id = $1`, [chute.id]);
+  // 格口状态已变化，草稿此前的试算结果不再有效，需重新试算才能发布
+  const draft = await getDraft();
+  if (draft) await invalidateSimulation(draft.id);
   res.json({ ok: true, rerouted_rules: rerouted, draft_created: draftCreated });
 });
 
-// 启用格口
+// 启用格口（同样会使草稿试算过时，需重新试算）
 router.post('/chutes/:id/enable', async (req, res) => {
   const rows = await query(
     `UPDATE chutes SET status = 'active', disabled_at = NULL
@@ -143,6 +145,8 @@ router.post('/chutes/:id/enable', async (req, res) => {
     [req.params.id]
   );
   if (!rows.length) return res.status(409).json({ error: '格口不存在或未处于停用状态' });
+  const draft = await getDraft();
+  if (draft) await invalidateSimulation(draft.id);
   res.json(rows[0]);
 });
 
@@ -277,8 +281,18 @@ router.post('/sort-rules/draft/simulate', async (req, res) => {
   }
 
   await query('UPDATE rule_versions SET simulated_at = NOW() WHERE id = $1', [draft.id]);
+  // 草稿中指向已停用格口的规则：试算按落空处理，单独列出提醒
+  const disabledRules = rules
+    .filter((r) => r.chute_status !== 'active')
+    .map((r) => ({
+      rule_id: r.id,
+      priority: r.priority,
+      destination: r.destination,
+      chute_code: r.chute_code,
+    }));
   res.json({
     stats,
+    disabled_rules: disabledRules,
     per_rule: [...perRule.values()]
       .map(({ rule, count }) => ({
         rule_id: rule.id,
