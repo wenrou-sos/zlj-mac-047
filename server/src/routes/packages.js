@@ -65,7 +65,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// 扫描分拣：只评估不改动状态，返回目标格口与命中原因
+// 扫描分拣：评估并返回目标格口与命中原因；冲突/无匹配的包裹当场转入待判区
 router.post('/scan', async (req, res) => {
   const { tracking_no } = req.body || {};
   if (!tracking_no?.trim()) return res.status(400).json({ error: '请扫描或输入运单号' });
@@ -99,6 +99,18 @@ router.post('/scan', async (req, res) => {
 
   const { version, rules } = await getPublishedRules();
   const decision = evaluate(pkg, version, rules);
+  // 规则冲突或无匹配：扫描当场转入待判区，等待人工判定
+  if (decision.outcome === 'conflict' || decision.outcome === 'unmatched') {
+    const rows = await query(
+      `UPDATE packages SET needs_review = TRUE, hit_reason = $2, rule_version_id = $3
+       WHERE id = $1 RETURNING *`,
+      [pkg.id, decision.reason, version?.id ?? null]
+    );
+    return res.json({
+      package: { ...rows[0], chute_code: pkg.chute_code, chute_name: pkg.chute_name },
+      decision,
+    });
+  }
   res.json({ package: pkg, decision });
 });
 
@@ -156,7 +168,7 @@ router.post('/:id/sort', async (req, res) => {
   res.json({ outcome: 'sorted', package: rows[0], decision });
 });
 
-// 装车（拦截件禁止装车）
+// 装车（拦截件禁止装车；未分配格口的件禁止装车）
 router.post('/:id/load', async (req, res) => {
   const [pkg] = await query('SELECT * FROM packages WHERE id = $1', [req.params.id]);
   if (!pkg) return res.status(404).json({ error: '包裹不存在' });
@@ -165,6 +177,9 @@ router.post('/:id/load', async (req, res) => {
   }
   if (pkg.status !== 'sorted') {
     return res.status(409).json({ error: '仅已分拣包裹可装车' });
+  }
+  if (!pkg.chute_id) {
+    return res.status(409).json({ error: '该件尚未分配目标格口，请先完成分拣路由再装车' });
   }
   const rows = await query(`UPDATE packages SET status = 'loaded' WHERE id = $1 RETURNING *`, [pkg.id]);
   res.json(rows[0]);

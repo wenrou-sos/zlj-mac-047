@@ -14,6 +14,30 @@ async function getDraft() {
   return draft || null;
 }
 
+// 确保草稿存在：没有则基于当前发布版复制一份
+async function ensureDraft() {
+  const existing = await getDraft();
+  if (existing) return { draft: existing, created: false };
+  const [published] = await query(`SELECT * FROM rule_versions WHERE status = 'published' LIMIT 1`);
+  const [draft] = await query(
+    `INSERT INTO rule_versions (version_no, status) VALUES (0, 'draft') RETURNING *`
+  );
+  if (published) {
+    await query(
+      `INSERT INTO sort_rules (version_id, priority, destination, min_weight, max_weight, chute_id)
+       SELECT $1, priority, destination, min_weight, max_weight, chute_id
+       FROM sort_rules WHERE version_id = $2`,
+      [draft.id, published.id]
+    );
+  }
+  return { draft, created: true };
+}
+
+// 草稿规则发生变更后，此前的试算结果作废，需重新试算才能发布
+async function invalidateSimulation(versionId) {
+  await query('UPDATE rule_versions SET simulated_at = NULL WHERE id = $1', [versionId]);
+}
+
 // ── 格口 ────────────────────────────────────────────────────────
 
 // 格口列表（附发布/草稿规则引用数与在格件数）
@@ -63,7 +87,8 @@ router.put('/chutes/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-// 停用格口：可选 reroute_chute_id 把发布版/草稿中指向本格口的规则改道到目标格口
+// 停用格口：可选 reroute_chute_id 改道。已发布版本不可变，改道只写入草稿
+// （没有草稿则自动基于发布版创建），需试算发布后生效；停用期间扫描落空进待判区
 router.post('/chutes/:id/disable', async (req, res) => {
   const { reroute_chute_id } = req.body || {};
   const [chute] = await query('SELECT * FROM chutes WHERE id = $1', [req.params.id]);
@@ -71,6 +96,7 @@ router.post('/chutes/:id/disable', async (req, res) => {
   if (chute.status === 'disabled') return res.status(409).json({ error: '格口已处于停用状态' });
 
   let rerouted = 0;
+  let draftCreated = false;
   if (reroute_chute_id) {
     if (Number(reroute_chute_id) === chute.id) {
       return res.status(400).json({ error: '改道目标不能是即将停用的格口本身' });
@@ -80,18 +106,33 @@ router.post('/chutes/:id/disable', async (req, res) => {
       [reroute_chute_id]
     );
     if (!target) return res.status(400).json({ error: '改道目标格口不存在或已停用' });
-    const moved = await query(
-      `UPDATE sort_rules SET chute_id = $1
-       WHERE chute_id = $2
-         AND version_id IN (SELECT id FROM rule_versions WHERE status IN ('published','draft'))
-       RETURNING id`,
-      [target.id, chute.id]
-    );
-    rerouted = moved.length;
+
+    // 只改草稿：无草稿且发布版有规则指向本格口时，先基于发布版建草稿
+    let draft = await getDraft();
+    if (!draft) {
+      const [{ c }] = await query(
+        `SELECT COUNT(*)::int AS c FROM sort_rules r
+         JOIN rule_versions v ON v.id = r.version_id
+         WHERE r.chute_id = $1 AND v.status = 'published'`,
+        [chute.id]
+      );
+      if (c > 0) {
+        ({ draft } = await ensureDraft());
+        draftCreated = true;
+      }
+    }
+    if (draft) {
+      const moved = await query(
+        `UPDATE sort_rules SET chute_id = $1 WHERE chute_id = $2 AND version_id = $3 RETURNING id`,
+        [target.id, chute.id, draft.id]
+      );
+      rerouted = moved.length;
+      if (rerouted > 0) await invalidateSimulation(draft.id);
+    }
   }
 
   await query(`UPDATE chutes SET status = 'disabled', disabled_at = NOW() WHERE id = $1`, [chute.id]);
-  res.json({ ok: true, rerouted_rules: rerouted });
+  res.json({ ok: true, rerouted_rules: rerouted, draft_created: draftCreated });
 });
 
 // 启用格口
@@ -122,21 +163,8 @@ router.get('/sort-rules', async (req, res) => {
 
 // 新建草稿（基于当前发布版复制；已有草稿则直接返回）
 router.post('/sort-rules/draft', async (req, res) => {
-  const existing = await getDraft();
-  if (existing) return res.json(existing);
-  const [published] = await query(`SELECT * FROM rule_versions WHERE status = 'published' LIMIT 1`);
-  const [draft] = await query(
-    `INSERT INTO rule_versions (version_no, status) VALUES (0, 'draft') RETURNING *`
-  );
-  if (published) {
-    await query(
-      `INSERT INTO sort_rules (version_id, priority, destination, min_weight, max_weight, chute_id)
-       SELECT $1, priority, destination, min_weight, max_weight, chute_id
-       FROM sort_rules WHERE version_id = $2`,
-      [draft.id, published.id]
-    );
-  }
-  res.status(201).json(draft);
+  const { draft, created } = await ensureDraft();
+  res.status(created ? 201 : 200).json(draft);
 });
 
 // 放弃草稿
@@ -182,6 +210,7 @@ router.post('/sort-rules/draft/rules', async (req, res) => {
      VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
     [draft.id, value.priority, value.destination, value.min_weight, value.max_weight, value.chute_id]
   );
+  await invalidateSimulation(draft.id);
   res.status(201).json(rows[0]);
 });
 
@@ -198,6 +227,7 @@ router.put('/sort-rules/draft/rules/:id', async (req, res) => {
     [value.priority, value.destination, value.min_weight, value.max_weight, value.chute_id, req.params.id, draft.id]
   );
   if (!rows.length) return res.status(404).json({ error: '规则不存在或不属于当前草稿' });
+  await invalidateSimulation(draft.id);
   res.json(rows[0]);
 });
 
@@ -210,10 +240,11 @@ router.delete('/sort-rules/draft/rules/:id', async (req, res) => {
     [req.params.id, draft.id]
   );
   if (!rows.length) return res.status(404).json({ error: '规则不存在或不属于当前草稿' });
+  await invalidateSimulation(draft.id);
   res.json({ ok: true });
 });
 
-// 试算：用草稿规则对当前全部待分拣包裹模拟分拣，输出影响面
+// 试算：用草稿规则对当前全部待分拣包裹模拟分拣，输出影响面（记录试算时间，发布前置要求）
 router.post('/sort-rules/draft/simulate', async (req, res) => {
   const draft = await getDraft();
   if (!draft) return res.status(409).json({ error: '当前没有草稿，请先新建草稿' });
@@ -245,6 +276,7 @@ router.post('/sort-rules/draft/simulate', async (req, res) => {
     }
   }
 
+  await query('UPDATE rule_versions SET simulated_at = NOW() WHERE id = $1', [draft.id]);
   res.json({
     stats,
     per_rule: [...perRule.values()]
@@ -264,12 +296,15 @@ router.post('/sort-rules/draft/simulate', async (req, res) => {
   });
 });
 
-// 发布草稿：当前发布版归档，草稿成为新发布版（单 SQL 原子切换）
+// 发布草稿：当前发布版归档，草稿成为新发布版（单 SQL 原子切换）。必须先试算
 router.post('/sort-rules/draft/publish', async (req, res) => {
   const draft = await getDraft();
   if (!draft) return res.status(409).json({ error: '当前没有草稿，请先新建草稿' });
   const [{ c }] = await query('SELECT COUNT(*)::int AS c FROM sort_rules WHERE version_id = $1', [draft.id]);
   if (c === 0) return res.status(400).json({ error: '草稿没有任何规则，不能发布' });
+  if (!draft.simulated_at) {
+    return res.status(409).json({ error: '草稿尚未试算或试算后又有修改，请先试算影响再发布' });
+  }
   const [{ maxv }] = await query(
     `SELECT COALESCE(MAX(version_no), 0)::int AS maxv FROM rule_versions WHERE status IN ('published','archived')`
   );

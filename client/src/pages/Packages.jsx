@@ -75,7 +75,10 @@ export default function Packages() {
   const scan = async () => {
     if (!scanNo.trim()) return;
     try {
-      setScanResult(await api.scanPackage(scanNo.trim()));
+      const r = await api.scanPackage(scanNo.trim());
+      setScanResult(r);
+      // 冲突/无匹配的包裹已被后端当场转入待判区，刷新列表
+      if (r.decision.outcome === 'conflict' || r.decision.outcome === 'unmatched') load();
     } catch (e) {
       setScanResult(null);
       toast(e.message, 'error');
@@ -114,6 +117,7 @@ export default function Packages() {
     const r = await run(() => api.sortPackage(assignTarget.id, { chute_id: Number(assignChuteId) }), null);
     if (r) {
       toast(`已人工指定格口 ${r.decision.chute.code}`, 'success');
+      if (scanResult?.package?.id === assignTarget.id) setScanResult(null);
       setAssignTarget(null);
       setAssignChuteId('');
     }
@@ -195,6 +199,9 @@ export default function Packages() {
                 <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2 }}>
                   {scanResult.decision.reason}
                   {scanResult.decision.version_no > 0 && <span className="text-muted">（规则 v{scanResult.decision.version_no}）</span>}
+                  {(scanResult.decision.outcome === 'conflict' || scanResult.decision.outcome === 'unmatched') && (
+                    <b style={{ color: '#b45309' }}> · 已转入待判区</b>
+                  )}
                 </div>
               </div>
               {scanResult.decision.outcome === 'routed' && (
@@ -203,8 +210,8 @@ export default function Packages() {
                 </button>
               )}
               {(scanResult.decision.outcome === 'conflict' || scanResult.decision.outcome === 'unmatched') && (
-                <button className="btn btn-sm" onClick={() => sort(scanResult.package.id)}>
-                  <PackageSearch size={13} /> 转入待判区
+                <button className="btn btn-next btn-sm" onClick={() => { setAssignTarget(scanResult.package); setAssignChuteId(''); }}>
+                  <PackageSearch size={13} /> 指定格口
                 </button>
               )}
             </div>

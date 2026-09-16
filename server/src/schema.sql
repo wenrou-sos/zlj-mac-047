@@ -61,9 +61,12 @@ CREATE TABLE IF NOT EXISTS rule_versions (
   id           SERIAL PRIMARY KEY,
   version_no   INTEGER NOT NULL DEFAULT 0,       -- 发布时分配的递增版本号（草稿为 0）
   status       VARCHAR(20) NOT NULL DEFAULT 'draft',
+  simulated_at TIMESTAMPTZ,                      -- 最近试算时间（规则变更即清空，未试算不得发布）
   published_at TIMESTAMPTZ,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE rule_versions ADD COLUMN IF NOT EXISTS simulated_at TIMESTAMPTZ;
 
 -- 分拣规则：按目的地 + 包裹属性（重量区间）匹配，指向目标格口
 CREATE TABLE IF NOT EXISTS sort_rules (

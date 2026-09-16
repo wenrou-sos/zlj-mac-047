@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { VEHICLE_FLOW } from '../helpers.js';
+import { getPublishedRules, evaluate } from '../sorting.js';
 
 const router = Router();
 
@@ -63,18 +64,38 @@ router.post('/:id/action/:action', async (req, res) => {
     [flow.to, id]
   );
 
-  // 完成分拣：车上待分拣包裹自动标记为已分拣（拦截件、待判件除外；sorted_at 只记首分时间）
+  // 完成分拣：车上待分拣包裹逐件按发布版规则路由（写入格口与版本快照）；
+  // 冲突/无匹配的转入待判区，不标记为已分拣；拦截件、待判件不动
   if (action === 'sort-end') {
-    await query(
-      `UPDATE packages SET status = 'sorted', sorted_at = COALESCE(sorted_at, NOW())
-       WHERE vehicle_id = $1 AND status = 'pending' AND needs_review = FALSE`,
+    const { version, rules } = await getPublishedRules();
+    const pending = await query(
+      `SELECT * FROM packages WHERE vehicle_id = $1 AND status = 'pending' AND needs_review = FALSE`,
       [id]
     );
+    for (const pkg of pending) {
+      const d = evaluate(pkg, version, rules);
+      if (d.outcome === 'routed') {
+        await query(
+          `UPDATE packages SET status = 'sorted',
+             sorted_at   = COALESCE(sorted_at, NOW()),
+             resorted_at = CASE WHEN sorted_at IS NOT NULL THEN NOW() ELSE resorted_at END,
+             chute_id = $2, rule_id = $3, rule_version_id = $4, hit_reason = $5
+           WHERE id = $1`,
+          [pkg.id, d.chute.id, d.rule.id, version.id, d.reason]
+        );
+      } else {
+        await query(
+          `UPDATE packages SET needs_review = TRUE, hit_reason = $2, rule_version_id = $3 WHERE id = $1`,
+          [pkg.id, d.reason, version?.id ?? null]
+        );
+      }
+    }
   }
-  // 发车：已分拣包裹自动装车；拦截件留在场地，不随车发走
+  // 发车：已分拣且已分配格口的包裹自动装车；拦截件、待判件留在场地，不随车发走
   if (action === 'depart') {
     await query(
-      `UPDATE packages SET status = 'loaded' WHERE vehicle_id = $1 AND status = 'sorted'`,
+      `UPDATE packages SET status = 'loaded'
+       WHERE vehicle_id = $1 AND status = 'sorted' AND chute_id IS NOT NULL`,
       [id]
     );
   }

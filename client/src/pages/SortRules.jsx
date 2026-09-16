@@ -84,6 +84,7 @@ export default function SortRules() {
     setBusy(true);
     try {
       setSim(await api.simulateDraft());
+      await load(); // 刷新草稿的试算时间，解锁发布按钮
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -99,7 +100,9 @@ export default function SortRules() {
   const disableChute = async () => {
     const r = await run(
       () => api.disableChute(disableTarget.id, rerouteId ? { reroute_chute_id: Number(rerouteId) } : {}),
-      rerouteId ? `格口 ${disableTarget.code} 已停用，引用规则已改道` : `格口 ${disableTarget.code} 已停用`
+      rerouteId
+        ? `格口 ${disableTarget.code} 已停用，改道已写入草稿，试算发布后生效`
+        : `格口 ${disableTarget.code} 已停用`
     );
     if (r) { setDisableTarget(null); setRerouteId(''); }
   };
@@ -154,12 +157,20 @@ export default function SortRules() {
         <div className="card-header">
           <h3><Pencil size={16} color="#b45309" /> 规则草稿{draft ? `（基于 v${published?.version_no ?? 0}，共 ${draft.rules.length} 条）` : ''}</h3>
           {draft ? (
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {!draft.simulated_at && (
+                <span className="text-muted" style={{ color: '#b45309' }}>试算后才能发布</span>
+              )}
               <button className="btn btn-sm" disabled={busy} onClick={() => run(() => api.discardDraft(), '草稿已放弃').then((r) => r && setSim(null))}>
                 <X size={13} /> 放弃草稿
               </button>
               <button className="btn btn-next btn-sm" disabled={busy} onClick={simulate}><Play size={13} /> 试算影响</button>
-              <button className="btn btn-primary btn-sm" disabled={busy || !draft.rules.length} onClick={publish}>
+              <button
+                className="btn btn-primary btn-sm"
+                disabled={busy || !draft.rules.length || !draft.simulated_at}
+                title={draft.simulated_at ? '' : '请先对当前草稿试算影响'}
+                onClick={publish}
+              >
                 <UploadCloud size={13} /> 发布新版本
               </button>
             </div>
@@ -433,11 +444,12 @@ export default function SortRules() {
                 <div className="alert-msg">
                   有 <b>{disableTarget.published_rule_count}</b> 条生效规则
                   {disableTarget.draft_rule_count > 0 && <>、<b>{disableTarget.draft_rule_count}</b> 条草稿规则</>}
-                  指向该格口。停用后这些规则在扫描时将落空（包裹进入待判区），可选择改道到其他格口。
+                  指向该格口。停用后生效规则在扫描时将落空（包裹进入待判区）。
+                  选择改道后，变更会写入<b>规则草稿</b>（无草稿则自动基于发布版创建），试算发布后生效，已发布版本不被直接改写。
                 </div>
               </div>
               <div className="form-row">
-                <label>改道目标格口（可选）</label>
+                <label>改道目标格口（可选，写入草稿）</label>
                 <select className="input" value={rerouteId} onChange={(e) => setRerouteId(e.target.value)}>
                   <option value="">不改道，规则保留指向已停用格口</option>
                   {activeChutes.filter((c) => c.id !== disableTarget.id).map((c) => (
