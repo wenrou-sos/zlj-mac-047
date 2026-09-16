@@ -1,7 +1,7 @@
 // 包裹路由：查询、分拣、异常拦截/解除
 // 装车不再逐件手工操作：包裹只能通过「出港配载单」随班发车锁定去向
 import { Router } from 'express';
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
 import { HttpError } from '../dispatch.js';
 
 const router = Router();
@@ -87,37 +87,40 @@ router.post('/:id/load', wrap(async (req, res) => {
 router.post('/:id/intercept', wrap(async (req, res) => {
   const { abnormal_type, note } = req.body || {};
   if (!abnormal_type) throw new HttpError(400, '请选择异常类型');
-  const [pkg] = await query('SELECT * FROM packages WHERE id = $1', [req.params.id]);
-  if (!pkg) throw new HttpError(404, '包裹不存在');
-  if (pkg.status === 'loaded') throw new HttpError(409, '包裹已随班发车，无法拦截');
-  if (pkg.status === 'intercepted') throw new HttpError(409, '包裹已处于拦截状态');
+  // 撤配 + 拦截必须在同一事务内：拦截失败时撤配也要回滚
+  const rows = await withTransaction(async (tx) => {
+    const [pkg] = await tx('SELECT * FROM packages WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!pkg) throw new HttpError(404, '包裹不存在');
+    if (pkg.status === 'loaded') throw new HttpError(409, '包裹已随班发车，无法拦截');
+    if (pkg.status === 'intercepted') throw new HttpError(409, '包裹已处于拦截状态');
 
-  // 在配载中(draft)单上：自动撤配，件留场处理；在已封车(sealed)单上：拦截即意味着不能放行
-  const occ = await query(
-    `SELECT lp.id, lp.plan_no, lp.status FROM load_plan_items lpi
-     JOIN load_plans lp ON lp.id = lpi.plan_id
-     WHERE lpi.package_id = $1 AND lpi.is_active`,
-    [pkg.id]
-  );
-  const sealed = occ.find((o) => o.status === 'sealed');
-  if (sealed) {
-    throw new HttpError(409, `该件已在封车配载单 ${sealed.plan_no} 上，请先让调度解封并撤配后再拦截`);
-  }
-  for (const o of occ) {
-    await query(
-      `UPDATE load_plan_items SET removed_at = NOW()
-       WHERE plan_id = $1 AND package_id = $2 AND is_active`,
-      [o.id, pkg.id]
+    // 在配载中(draft)单上：自动撤配，件留场处理；在已封车(sealed)单上：拦截即意味着不能放行
+    const occ = await tx(
+      `SELECT lp.id, lp.plan_no, lp.status FROM load_plan_items lpi
+       JOIN load_plans lp ON lp.id = lpi.plan_id
+       WHERE lpi.package_id = $1 AND lpi.is_active`,
+      [pkg.id]
     );
-  }
-
-  const rows = await query(
-    `UPDATE packages
-     SET status = 'intercepted', is_abnormal = TRUE, abnormal_type = $1,
-         abnormal_note = $2, intercepted_at = NOW()
-     WHERE id = $3 RETURNING *`,
-    [abnormal_type, note || null, pkg.id]
-  );
+    const sealed = occ.find((o) => o.status === 'sealed');
+    if (sealed) {
+      throw new HttpError(409, `该件已在封车配载单 ${sealed.plan_no} 上，请先让调度解封并撤配后再拦截`);
+    }
+    if (occ.length) {
+      await tx(
+        `UPDATE load_plan_items SET removed_at = NOW()
+         WHERE package_id = $1 AND is_active`,
+        [pkg.id]
+      );
+    }
+    const [updated] = await tx(
+      `UPDATE packages
+       SET status = 'intercepted', is_abnormal = TRUE, abnormal_type = $1,
+           abnormal_note = $2, intercepted_at = NOW()
+       WHERE id = $3 RETURNING *`,
+      [abnormal_type, note || null, pkg.id]
+    );
+    return [updated, occ.length];
+  });
   res.json(rows[0]);
 }));
 

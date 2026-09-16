@@ -14,11 +14,13 @@ const PLAN_SELECT = `
   SELECT lp.*,
     v.plate_no, v.route_code, v.status AS vehicle_status,
     v.planned_departure, v.capacity_kg AS vehicle_capacity_kg,
-    COALESCE(SUM(p.weight_kg) FILTER (WHERE lpi.is_active), 0)::float  AS loaded_kg,
-    COUNT(p.id) FILTER (WHERE lpi.is_active)::int                       AS item_count
+    -- 清单口径：未撤配（removed_at IS NULL）即仍在单上，已发车单据此保留实际清单；
+    -- 占用口径另以 is_active 为准（发车/撤单后自动释放）
+    COALESCE(SUM(p.weight_kg) FILTER (WHERE lpi.removed_at IS NULL),0)::float  AS loaded_kg,
+    COUNT(p.id) FILTER (WHERE lpi.removed_at IS NULL)::int                       AS item_count
   FROM load_plans lp
   JOIN vehicles v ON v.id = lp.vehicle_id
-  LEFT JOIN load_plan_items lpi ON lpi.plan_id = lp.id AND lpi.is_active
+  LEFT JOIN load_plan_items lpi ON lpi.plan_id = lp.id
   LEFT JOIN packages p ON p.id = lpi.package_id`;
 
 async function getPlan(tx, id, { lock = false, activeOnly = false } = {}) {
@@ -70,7 +72,7 @@ router.get('/:id', wrap(async (req, res) => {
      FROM load_plan_items lpi
      JOIN packages p ON p.id = lpi.package_id
      LEFT JOIN vehicles sv ON sv.id = p.vehicle_id
-     WHERE lpi.plan_id = $1 AND lpi.is_active
+     WHERE lpi.plan_id = $1 AND lpi.removed_at IS NULL
      ORDER BY p.destination, p.sorted_at, p.id`,
     [req.params.id]
   );

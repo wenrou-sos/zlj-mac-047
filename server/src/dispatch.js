@@ -153,12 +153,8 @@ export async function departVehicle(vehicleId) {
     }
     const departingPlanIds = filledPlanIds;
 
-    // 先置明细移除时间（触发器据此释放占用），再锁父单、锁包裹去向
-    await tx(
-      `UPDATE load_plan_items SET removed_at = NOW()
-       WHERE plan_id = ANY($1::int[]) AND removed_at IS NULL`,
-      [departingPlanIds]
-    );
+    // 锁父单为已发车：明细 removed_at 保持 NULL，实际清单永久保留；
+    // 占用释放由父单状态触发器（is_active=FALSE）完成，不在发车时移除明细
     await tx(
       `UPDATE packages SET status = 'loaded', loaded_at = NOW()
        WHERE id = ANY($1::int[]) AND status <> 'intercepted'`,
