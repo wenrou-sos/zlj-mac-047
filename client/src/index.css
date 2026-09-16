@@ -313,6 +313,106 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .pulse { animation: pulse 2s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
+/* ── 登录页 ── */
+.login-wrap {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+  padding: 24px;
+}
+.login-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 32px 32px 24px;
+  width: 400px;
+  max-width: 100%;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+.login-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+.login-logo .logo-icon {
+  width: 44px; height: 44px; border-radius: 12px;
+  background: var(--primary);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.login-logo h1 { font-size: 19px; font-weight: 700; }
+.login-sub { color: var(--text-3); font-size: 12px; margin-top: 3px; }
+.login-btn { width: 100%; justify-content: center; padding: 10px; font-size: 14px; }
+.login-error {
+  background: var(--red-bg); border: 1px solid #fecaca; color: var(--red);
+  border-radius: 8px; padding: 9px 12px; font-size: 13px; margin-bottom: 14px;
+}
+.login-demo { margin-top: 20px; border-top: 1px dashed var(--border); padding-top: 14px; }
+.login-demo-title { font-size: 12px; color: var(--text-3); margin-bottom: 8px; }
+.login-demo-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.login-demo-item {
+  border: 1px solid var(--border); background: #f8fafc;
+  border-radius: 8px; padding: 5px 10px;
+  font-size: 12px; cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+  color: var(--text-2);
+}
+.login-demo-item:hover { border-color: var(--primary); color: var(--primary-dark); background: #eff6ff; }
+.login-demo-item .mono { color: var(--text-3); font-size: 11px; }
+
+/* ── 侧边栏用户盒 ── */
+.user-box {
+  margin-top: auto;
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.user-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--primary); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px; flex-shrink: 0;
+}
+.user-info { min-width: 0; }
+.user-name { color: #e2e8f0; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.user-roles { color: #64748b; font-size: 11px; white-space: nowrap; }
+.logout-btn {
+  margin-left: auto;
+  background: none; border: none; color: #64748b;
+  cursor: pointer; padding: 6px; border-radius: 6px;
+  display: flex; align-items: center;
+}
+.logout-btn:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.sidebar .sidebar-footer { margin-top: 0; }
+
+/* ── 标签页 ── */
+.tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.tabs button {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 16px; border-radius: 999px;
+  border: 1px solid var(--border); background: #fff;
+  color: var(--text-2); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s;
+}
+.tabs button:hover { border-color: #cbd5e1; }
+.tabs button.active { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
+
+/* ── 岗位勾选 ── */
+.role-checks { display: flex; flex-direction: column; gap: 8px; }
+.role-checks label {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  cursor: pointer; font-size: 13px;
+}
+.role-checks label:hover { background: #f8fafc; }
+.role-checks input[type='checkbox'] { width: 15px; height: 15px; accent-color: var(--primary); }
+
+/* ── 审计变更对比 ── */
+.diff { font-size: 12px; line-height: 1.7; }
+.diff-row { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.diff-field { color: var(--text-3); min-width: 76px; }
+.diff-old { color: var(--red); text-decoration: line-through; }
+.diff-arrow { color: var(--text-3); }
+.diff-new { color: var(--green); font-weight: 600; }
+
+.tbl tbody tr.row-muted { opacity: 0.55; }
+
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

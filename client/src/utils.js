@@ -24,6 +24,35 @@ export const ABNORMAL_TYPES = {
   address_issue: '地址信息异常',
 };
 
+// 岗位
+export const ROLE_LABEL = {
+  dispatcher: '调度',
+  sorter: '分拣',
+  exception: '异常处理',
+  admin: '管理员',
+};
+
+// 审计动作
+export const AUDIT_ACTIONS = {
+  'auth.login': '登录',
+  'auth.login_failed': '登录失败',
+  'auth.logout': '退出登录',
+  'vehicle.create': '到车预报',
+  'vehicle.action': '班次推进',
+  'vehicle.delete': '删除班次',
+  'package.create': '到件登记',
+  'package.sort': '分拣完成',
+  'package.load': '装车',
+  'package.intercept': '异常拦截',
+  'package.release': '解除拦截',
+  'settings.update': '修改超时规则',
+  'user.create': '新建账号',
+  'user.roles': '调整岗位',
+  'user.status': '停用/启用账号',
+  'user.password': '重置密码',
+  'session.revoke': '撤销会话',
+};
+
 export const fmtTime = (t) => {
   if (!t) return '—';
   const d = new Date(t);

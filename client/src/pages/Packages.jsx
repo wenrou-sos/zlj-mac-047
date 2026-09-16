@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Plus, RefreshCw, Search, Ban, Undo2, PackageCheck, Forklift, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../api.js';
-import { useToast } from '../App.jsx';
+import { useToast, useAuth } from '../App.jsx';
 import { Badge, Modal, Empty } from '../components/common.jsx';
 import { PACKAGE_STATUS, ABNORMAL_TYPES, fmtDateTime } from '../utils.js';
 
@@ -16,6 +16,12 @@ export default function Packages() {
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ tracking_no: '', destination: '', weight_kg: '' });
   const toast = useToast();
+  const { hasPerm } = useAuth();
+  const canCreate = hasPerm('package:create');
+  const canSort = hasPerm('package:sort');
+  const canLoad = hasPerm('package:load');
+  const canIntercept = hasPerm('package:intercept');
+  const canRelease = hasPerm('package:release');
 
   const load = useCallback(async () => {
     try {
@@ -79,7 +85,9 @@ export default function Packages() {
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button className="btn" onClick={() => load()}><RefreshCw size={14} /> 刷新</button>
-          <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> 到件登记</button>
+          {canCreate && (
+            <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> 到件登记</button>
+          )}
         </div>
       </div>
 
@@ -148,32 +156,32 @@ export default function Packages() {
                   <td className="mono text-muted">{fmtDateTime(p.created_at)}</td>
                   <td>
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {p.status === 'pending' && (
-                        <>
-                          <button className="btn btn-next btn-sm" onClick={() => run(() => api.sortPackage(p.id), '分拣完成')}>
-                            <PackageCheck size={13} /> 分拣
-                          </button>
-                          <button className="btn btn-danger btn-sm" onClick={() => { setInterceptTarget(p); setInterceptForm({ abnormal_type: 'damaged', note: '' }); }}>
-                            <Ban size={13} /> 拦截
-                          </button>
-                        </>
+                      {p.status === 'pending' && canSort && (
+                        <button className="btn btn-next btn-sm" onClick={() => run(() => api.sortPackage(p.id), '分拣完成')}>
+                          <PackageCheck size={13} /> 分拣
+                        </button>
                       )}
-                      {p.status === 'sorted' && (
-                        <>
-                          <button className="btn btn-next btn-sm" onClick={() => run(() => api.loadPackage(p.id), '已装车')}>
-                            <Forklift size={13} /> 装车
-                          </button>
-                          <button className="btn btn-danger btn-sm" onClick={() => { setInterceptTarget(p); setInterceptForm({ abnormal_type: 'damaged', note: '' }); }}>
-                            <Ban size={13} /> 拦截
-                          </button>
-                        </>
+                      {(p.status === 'pending' || p.status === 'sorted') && canIntercept && (
+                        <button className="btn btn-danger btn-sm" onClick={() => { setInterceptTarget(p); setInterceptForm({ abnormal_type: 'damaged', note: '' }); }}>
+                          <Ban size={13} /> 拦截
+                        </button>
                       )}
-                      {p.status === 'intercepted' && (
+                      {p.status === 'sorted' && canLoad && (
+                        <button className="btn btn-next btn-sm" onClick={() => run(() => api.loadPackage(p.id), '已装车')}>
+                          <Forklift size={13} /> 装车
+                        </button>
+                      )}
+                      {p.status === 'intercepted' && canRelease && (
                         <button className="btn btn-sm" onClick={() => run(() => api.releasePackage(p.id), '已解除拦截')}>
                           <Undo2 size={13} /> 解除拦截
                         </button>
                       )}
                       {p.status === 'loaded' && <span className="text-muted">已装车发运</span>}
+                      {p.status !== 'loaded' && !((p.status === 'pending' && (canSort || canIntercept))
+                        || (p.status === 'sorted' && (canLoad || canIntercept))
+                        || (p.status === 'intercepted' && canRelease)) && (
+                        <span className="text-muted">仅查看</span>
+                      )}
                     </div>
                   </td>
                 </tr>

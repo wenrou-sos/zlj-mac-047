@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, RefreshCw, Truck, Check, ArrowRight, Trash2, AlertOctagon } from 'lucide-react';
 import { api } from '../api.js';
-import { useToast } from '../App.jsx';
+import { useToast, useAuth } from '../App.jsx';
 import { Badge, Modal, Empty } from '../components/common.jsx';
 import { VEHICLE_STATUS, fmtTime, fmtAgo } from '../utils.js';
 
@@ -47,6 +47,10 @@ export default function Vehicles() {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ plate_no: '', route_code: '', driver_name: '', planned_arrival: '', planned_departure: '' });
   const toast = useToast();
+  const { hasPerm } = useAuth();
+  const canCreate = hasPerm('vehicle:create');
+  const canAction = hasPerm('vehicle:action');
+  const canDelete = hasPerm('vehicle:delete');
 
   const load = async () => {
     try {
@@ -128,7 +132,9 @@ export default function Vehicles() {
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button className="btn" onClick={load}><RefreshCw size={14} /> 刷新</button>
-          <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> 到车预报</button>
+          {canCreate && (
+            <button className="btn btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> 到车预报</button>
+          )}
         </div>
       </div>
 
@@ -195,15 +201,18 @@ export default function Vehicles() {
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
-                        {next && (
+                        {next && canAction && (
                           <button className="btn btn-next btn-sm" onClick={() => doAction(v)}>
                             {next.label} <ArrowRight size={13} />
                           </button>
                         )}
-                        {v.status === 'expected' && (
+                        {v.status === 'expected' && canDelete && (
                           <button className="btn btn-danger btn-sm" onClick={() => remove(v)}><Trash2 size={13} /></button>
                         )}
                         {v.status === 'departed' && <span className="text-muted">已离场</span>}
+                        {v.status !== 'departed' && !(next && canAction) && !(v.status === 'expected' && canDelete) && (
+                          <span className="text-muted">仅查看</span>
+                        )}
                       </div>
                     </td>
                   </tr>

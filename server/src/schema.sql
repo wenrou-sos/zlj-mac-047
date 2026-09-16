@@ -54,3 +54,47 @@ INSERT INTO settings (key, value) VALUES
   ('sort_timeout_min',   60),   -- 卸车完成后 N 分钟内应完成分拣
   ('warn_ratio',         0.8)   -- 达到时限 80% 触发黄色预警
 ON CONFLICT (key) DO NOTHING;
+
+-- 账号：status = active启用 / disabled停用
+CREATE TABLE IF NOT EXISTS users (
+  id            SERIAL PRIMARY KEY,
+  username      VARCHAR(50) UNIQUE NOT NULL,   -- 登录账号
+  display_name  VARCHAR(50) NOT NULL,          -- 姓名
+  password_hash TEXT NOT NULL,                 -- scrypt: salt:hash
+  status        VARCHAR(20) NOT NULL DEFAULT 'active',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 岗位（一人可兼多岗，权限取并集）
+CREATE TABLE IF NOT EXISTS user_roles (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role    VARCHAR(20) NOT NULL,                -- dispatcher调度/sorter分拣/exception异常处理/admin管理员
+  PRIMARY KEY (user_id, role)
+);
+
+-- 登录会话（服务端会话，可撤销；权限按请求实时校验，不随会话缓存）
+CREATE TABLE IF NOT EXISTS sessions (
+  id            VARCHAR(64) PRIMARY KEY,       -- 访问令牌
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  revoked_at    TIMESTAMPTZ,                   -- 撤销时间（NULL=有效）
+  revoke_reason VARCHAR(50)                    -- logout手动退出/account_disabled账号停用/password_reset密码重置/revoked_by_admin管理员撤销
+);
+
+-- 操作审计：关键业务动作的操作者与变更前后记录
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id          SERIAL PRIMARY KEY,
+  actor_id    INTEGER,                         -- 操作者账号ID（登录失败等场景可为空）
+  actor_name  VARCHAR(120) NOT NULL,           -- 操作者显示名(账号)
+  action      VARCHAR(50) NOT NULL,            -- 动作标识，如 package.intercept
+  target_type VARCHAR(30),                     -- 对象类型：vehicle/package/settings/user
+  target_id   VARCHAR(50),                     -- 对象ID
+  detail      JSONB,                           -- { before, after, extra } 变更前后内容
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user    ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created    ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_action     ON audit_logs(action);

@@ -2,6 +2,8 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { VEHICLE_FLOW } from '../helpers.js';
+import { requirePerm } from '../auth.js';
+import { audit } from '../audit.js';
 
 const router = Router();
 
@@ -31,8 +33,8 @@ router.get('/', async (req, res) => {
   res.json(rows);
 });
 
-// 新增车辆（到车预报）
-router.post('/', async (req, res) => {
+// 新增车辆（到车预报）—— 需调度权限
+router.post('/', requirePerm('vehicle:create'), async (req, res) => {
   const { plate_no, route_code, driver_name, planned_arrival, planned_departure } = req.body || {};
   if (!plate_no || !route_code) {
     return res.status(400).json({ error: '车牌号和线路不能为空' });
@@ -42,11 +44,15 @@ router.post('/', async (req, res) => {
      VALUES ($1,$2,$3,$4,$5) RETURNING *`,
     [plate_no, route_code, driver_name || null, planned_arrival || null, planned_departure || null]
   );
+  await audit(req, 'vehicle.create', {
+    targetType: 'vehicle', targetId: rows[0].id,
+    after: { plate_no, route_code, driver_name: driver_name || null, planned_arrival, planned_departure },
+  });
   res.status(201).json(rows[0]);
 });
 
-// 状态推进：到车 / 开始卸车 / 完成卸车 / 开始分拣 / 完成分拣 / 发车
-router.post('/:id/action/:action', async (req, res) => {
+// 状态推进：到车 / 开始卸车 / 完成卸车 / 开始分拣 / 完成分拣 / 发车 —— 需调度权限
+router.post('/:id/action/:action', requirePerm('vehicle:action'), async (req, res) => {
   const { id } = req.params;
   const { action } = req.params;
   const flow = VEHICLE_FLOW[action];
@@ -63,34 +69,47 @@ router.post('/:id/action/:action', async (req, res) => {
     [flow.to, id]
   );
 
+  const extra = { action: flow.label, plate_no: vehicle.plate_no };
   // 完成分拣：车上所有待分拣包裹自动标记为已分拣（拦截件除外）
   if (action === 'sort-end') {
-    await query(
+    const affected = await query(
       `UPDATE packages SET status = 'sorted', sorted_at = NOW()
-       WHERE vehicle_id = $1 AND status = 'pending'`,
+       WHERE vehicle_id = $1 AND status = 'pending' RETURNING id`,
       [id]
     );
+    extra.auto_sorted_packages = affected.length;
   }
   // 发车：已分拣包裹自动装车；拦截件留在场地，不随车发走
   if (action === 'depart') {
-    await query(
-      `UPDATE packages SET status = 'loaded' WHERE vehicle_id = $1 AND status = 'sorted'`,
+    const affected = await query(
+      `UPDATE packages SET status = 'loaded' WHERE vehicle_id = $1 AND status = 'sorted' RETURNING id`,
       [id]
     );
+    extra.auto_loaded_packages = affected.length;
   }
 
+  await audit(req, 'vehicle.action', {
+    targetType: 'vehicle', targetId: id,
+    before: { status: vehicle.status },
+    after: { status: flow.to },
+    extra,
+  });
   res.json(rows[0]);
 });
 
-// 删除未到车的预报班次
-router.delete('/:id', async (req, res) => {
+// 删除未到车的预报班次 —— 需调度权限
+router.delete('/:id', requirePerm('vehicle:delete'), async (req, res) => {
   const { id } = req.params;
-  const [vehicle] = await query('SELECT status FROM vehicles WHERE id = $1', [id]);
+  const [vehicle] = await query('SELECT * FROM vehicles WHERE id = $1', [id]);
   if (!vehicle) return res.status(404).json({ error: '车辆不存在' });
   if (vehicle.status !== 'expected') {
     return res.status(409).json({ error: '仅待到车状态的班次可以删除' });
   }
   await query('DELETE FROM vehicles WHERE id = $1', [id]);
+  await audit(req, 'vehicle.delete', {
+    targetType: 'vehicle', targetId: id,
+    before: { plate_no: vehicle.plate_no, route_code: vehicle.route_code, status: vehicle.status },
+  });
   res.json({ ok: true });
 });
 

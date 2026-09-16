@@ -5,7 +5,7 @@ import {
   AreaChart, Area, CartesianGrid, Legend, Cell,
 } from 'recharts';
 import { api } from '../api.js';
-import { useToast } from '../App.jsx';
+import { useToast, useAuth } from '../App.jsx';
 import { Badge, Empty } from '../components/common.jsx';
 import { VEHICLE_STATUS, ABNORMAL_TYPES, fmtDateTime } from '../utils.js';
 
@@ -16,6 +16,8 @@ export default function Stats() {
   const [abnormal, setAbnormal] = useState(null);
   const [settings, setSettings] = useState(null);
   const toast = useToast();
+  const { hasPerm } = useAuth();
+  const canEditSettings = hasPerm('settings:update');
 
   const load = async () => {
     try {
@@ -132,22 +134,28 @@ export default function Stats() {
           <div className="card-body">
             <div className="form-row">
               <label>卸车时限（到车后，分钟）</label>
-              <input className="input" type="number" min="1" value={settings.unload_timeout_min}
+              <input className="input" type="number" min="1" value={settings.unload_timeout_min} disabled={!canEditSettings}
                 onChange={(e) => setSettings({ ...settings, unload_timeout_min: e.target.value })} />
             </div>
             <div className="form-row">
               <label>分拣时限（卸车完成后，分钟）</label>
-              <input className="input" type="number" min="1" value={settings.sort_timeout_min}
+              <input className="input" type="number" min="1" value={settings.sort_timeout_min} disabled={!canEditSettings}
                 onChange={(e) => setSettings({ ...settings, sort_timeout_min: e.target.value })} />
             </div>
             <div className="form-row">
               <label>预警阈值（达到时限比例，0~1）</label>
-              <input className="input" type="number" min="0.1" max="1" step="0.05" value={settings.warn_ratio}
+              <input className="input" type="number" min="0.1" max="1" step="0.05" value={settings.warn_ratio} disabled={!canEditSettings}
                 onChange={(e) => setSettings({ ...settings, warn_ratio: e.target.value })} />
             </div>
-            <button className="btn btn-primary" onClick={saveSettings} style={{ width: '100%', justifyContent: 'center' }}>
-              <Save size={14} /> 保存规则
-            </button>
+            {canEditSettings ? (
+              <button className="btn btn-primary" onClick={saveSettings} style={{ width: '100%', justifyContent: 'center' }}>
+                <Save size={14} /> 保存规则
+              </button>
+            ) : (
+              <div className="text-muted" style={{ textAlign: 'center', padding: '8px 0' }}>
+                当前岗位仅可查看，修改规则需管理员权限
+              </div>
+            )}
             <div className="text-muted" style={{ marginTop: 10, lineHeight: 1.6 }}>
               超过时限标记为「已超时」（红色）；达到时限 {Math.round(settings.warn_ratio * 100)}% 标记为「预警」（黄色）。发车超时以计划发车时间为准。
             </div>

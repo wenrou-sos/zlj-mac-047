@@ -2,6 +2,8 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { getSettings, computeAlerts } from '../helpers.js';
+import { requirePerm } from '../auth.js';
+import { audit } from '../audit.js';
 
 const router = Router();
 
@@ -111,7 +113,9 @@ router.get('/settings', async (req, res) => {
   res.json(await getSettings());
 });
 
-router.put('/settings', async (req, res) => {
+// 修改超时规则 —— 需管理员权限
+router.put('/settings', requirePerm('settings:update'), async (req, res) => {
+  const before = await getSettings();
   const { unload_timeout_min, sort_timeout_min, warn_ratio } = req.body || {};
   const entries = { unload_timeout_min, sort_timeout_min, warn_ratio };
   for (const [key, val] of Object.entries(entries)) {
@@ -122,7 +126,9 @@ router.put('/settings', async (req, res) => {
       [key, Number(val)]
     );
   }
-  res.json(await getSettings());
+  const after = await getSettings();
+  await audit(req, 'settings.update', { targetType: 'settings', before, after });
+  res.json(after);
 });
 
 export default router;
