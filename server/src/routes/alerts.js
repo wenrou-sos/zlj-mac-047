@@ -140,28 +140,35 @@ router.post('/:id/claim', async (req, res) => {
   if (!actor) return res.status(400).json({ error: '缺少处理人身份' });
   const id = numericId(req);
   if (id === null) return res.status(404).json({ error: '预警事件不存在' });
+
+  // 原子认领：把「无人认领」的判断直接放进 UPDATE 条件，靠数据库行锁裁决并发。
+  // 两人同时认领时，只有一条事务能命中 assigned_to IS NULL 并提交，
+  // 另一条影响行数为 0，绝不会发生覆盖。
+  let claimed = false;
+  await transaction(async (tx) => {
+    const rows = await tx.query(
+      `UPDATE alert_events
+         SET assigned_to = $2, acknowledged_at = NOW()
+       WHERE id = $1 AND status <> 'recovered' AND assigned_to IS NULL
+       RETURNING id`,
+      [id, actor]
+    );
+    if (rows[0]) {
+      claimed = true;
+      await tx.query(
+        `INSERT INTO alert_event_logs (event_id, action, actor, note) VALUES ($1,'claim',$2,'认领并确认处理')`,
+        [id, actor]
+      );
+    }
+  });
+  if (claimed) return res.json({ ok: true, claimed: true });
+
+  // 未抢到：区分 不存在 / 已恢复 / 本人已认领（幂等）/ 已被他人认领
   const [ev] = await query('SELECT * FROM alert_events WHERE id = $1', [id]);
   if (!ev) return res.status(404).json({ error: '预警事件不存在' });
   if (ev.status === 'recovered') return res.status(409).json({ error: '事件已恢复关闭，无需认领' });
-  if (ev.assigned_to && ev.assigned_to !== actor) {
-    return res.status(409).json({ error: `该预警已由 ${ev.assigned_to} 认领` });
-  }
-  // 已由本人认领：幂等返回，不重复写台账
   if (ev.assigned_to === actor) return res.json({ ok: true, claimed: false });
-
-  await transaction(async (tx) => {
-    await tx.query(
-      `UPDATE alert_events
-         SET assigned_to = $2, acknowledged_at = NOW()
-       WHERE id = $1`,
-      [id, actor]
-    );
-    await tx.query(
-      `INSERT INTO alert_event_logs (event_id, action, actor, note) VALUES ($1,'claim',$2,'认领并确认处理')`,
-      [id, actor]
-    );
-  });
-  res.json({ ok: true, claimed: true });
+  return res.status(409).json({ error: `该预警已由 ${ev.assigned_to} 认领` });
 });
 
 // 添加处理记录（不改状态；已确认但未恢复的事件持续保留在待办中）
@@ -198,30 +205,41 @@ router.post('/:id/resolve', async (req, res) => {
   const note = String(req.body?.note || '').trim();
   const id = numericId(req);
   if (id === null) return res.status(404).json({ error: '预警事件不存在' });
-  const [ev] = await query('SELECT * FROM alert_events WHERE id = $1', [id]);
-  if (!ev) return res.status(404).json({ error: '预警事件不存在' });
-  if (ev.status === 'recovered') return res.status(409).json({ error: '事件已恢复关闭' });
+  const [exists] = await query('SELECT id, vehicle_id FROM alert_events WHERE id = $1', [id]);
+  if (!exists) return res.status(404).json({ error: '预警事件不存在' });
 
+  // 原子状态推进：仅当尚未处理/恢复时才转入 resolved 并写台账，
+  // 并发「处理完成」只有一次生效，不会重复记台账或覆盖处理时间
+  let transitioned = false;
   await transaction(async (tx) => {
-    await tx.query(
+    const rows = await tx.query(
       `UPDATE alert_events
          SET status = 'resolved', resolved_at = NOW(), resolved_by = $2,
              assigned_to = COALESCE(assigned_to, $2),
              acknowledged_at = COALESCE(acknowledged_at, NOW()),
              close_note = $3
-       WHERE id = $1`,
+       WHERE id = $1 AND status NOT IN ('resolved','recovered')
+       RETURNING id`,
       [id, actor, note || null]
     );
-    await tx.query(
-      `INSERT INTO alert_event_logs (event_id, action, actor, note)
-       VALUES ($1,'resolve',$2,$3)`,
-      [id, actor, note ? `已处理：${note}` : '已处理，等待车辆恢复']
-    );
+    if (rows[0]) {
+      transitioned = true;
+      await tx.query(
+        `INSERT INTO alert_event_logs (event_id, action, actor, note)
+         VALUES ($1,'resolve',$2,$3)`,
+        [id, actor, note ? `已处理：${note}` : '已处理，等待车辆恢复']
+      );
+    }
   });
+  const [after] = await query('SELECT status FROM alert_events WHERE id = $1', [id]);
+  if (after.status === 'recovered') {
+    // 标记前已恢复（或对账时发现现场已恢复），无需再处理
+    return res.status(409).json({ error: '事件已恢复关闭' });
+  }
   // 标记后立即对账：若此刻条件已消失则直接恢复关闭
-  await reconcileAlerts({ actor, vehicleId: ev.vehicle_id });
+  await reconcileAlerts({ actor, vehicleId: exists.vehicle_id });
   const [updated] = await query('SELECT status, recovered_at FROM alert_events WHERE id = $1', [id]);
-  res.json({ ok: true, status: updated.status, recovered_at: updated.recovered_at });
+  res.json({ ok: true, status: updated.status, recovered_at: updated.recovered_at, transitioned });
 });
 
 // 主管改派
@@ -232,19 +250,29 @@ router.post('/:id/reassign', async (req, res) => {
   if (!to) return res.status(400).json({ error: '请填写改派对象' });
   const id = numericId(req);
   if (id === null) return res.status(404).json({ error: '预警事件不存在' });
-  const [ev] = await query('SELECT id, status, vehicle_id FROM alert_events WHERE id = $1', [id]);
-  if (!ev) return res.status(404).json({ error: '预警事件不存在' });
-  if (ev.status === 'recovered') return res.status(409).json({ error: '事件已恢复关闭' });
 
+  // 原子改派：事件已恢复则不允许，避免与恢复关闭竞争后仍改派到已关闭事件
+  let moved = false;
   await transaction(async (tx) => {
-    await tx.query(`UPDATE alert_events SET assigned_to = $2 WHERE id = $1`, [id, to]);
-    await tx.query(
-      `INSERT INTO alert_event_logs (event_id, action, actor, note)
-       VALUES ($1,'reassign',$2,$3)`,
-      [id, actor, `改派给 ${to}`]
+    const rows = await tx.query(
+      `UPDATE alert_events SET assigned_to = $2
+        WHERE id = $1 AND status <> 'recovered'
+        RETURNING id`,
+      [id, to]
     );
+    if (rows[0]) {
+      moved = true;
+      await tx.query(
+        `INSERT INTO alert_event_logs (event_id, action, actor, note)
+         VALUES ($1,'reassign',$2,$3)`,
+        [id, actor, `改派给 ${to}`]
+      );
+    }
   });
-  res.json({ ok: true });
+  if (moved) return res.json({ ok: true });
+  const [ev] = await query('SELECT status FROM alert_events WHERE id = $1', [id]);
+  if (!ev) return res.status(404).json({ error: '预警事件不存在' });
+  return res.status(409).json({ error: '事件已恢复关闭，无法改派' });
 });
 
 export default router;
