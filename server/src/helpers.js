@@ -87,6 +87,27 @@ export const VEHICLE_FLOW = {
   depart:         { from: ['sorted'],    to: 'departed',  set: 'departed_at',      label: '发车' },
 };
 
+export const VEHICLE_TYPE_LABEL = {
+  small: '小型车',
+  medium: '中型车',
+  large: '大型车',
+  extra_large: '特大车',
+};
+
+export const APPOINTMENT_STATUS_LABEL = {
+  booked: '已预约',
+  checked: '候叫中',
+  called: '已叫号',
+  unloading: '卸车中',
+  completed: '已完成',
+  cancelled: '已取消',
+};
+
+export const DOCK_STATUS_LABEL = {
+  active: '启用',
+  disabled: '停用',
+};
+
 export const VEHICLE_STATUS_LABEL = {
   expected: '待到车', arrived: '已到车', unloading: '卸车中',
   unloaded: '待分拣', sorting: '分拣中', sorted: '待发车', departed: '已发车',
