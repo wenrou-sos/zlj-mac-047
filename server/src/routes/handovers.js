@@ -4,7 +4,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import {
-  buildLiveItems, getLatestOwnerMap, getSourceItemIds,
+  buildLiveItems, getLatestOwnerMap, getSourceItemIds, getBusyItemKeys,
   syncResolved, evaluateItem, buildFollowups, nextHandoverNo,
 } from '../handover.js';
 
@@ -103,6 +103,7 @@ router.post('/', async (req, res) => {
   const [fromShift] = shifts.filter((s) => s.id === Number(shift_id));
   const liveItems = await buildLiveItems();
   const ownerMap = await getLatestOwnerMap();
+  const busySet = await getBusyItemKeys(); // 已在其他未签收单中，不能重复汇集
   const sourceMap = await getSourceItemIds(liveItems.map((i) => i.item_key));
 
   const handoverNo = await nextHandoverNo(fromShift.work_date);
@@ -114,10 +115,16 @@ router.post('/', async (req, res) => {
   const handoverId = doc[0].id;
 
   let appended = 0;
+  const skipped = [];
   for (const it of liveItems) {
     // 责任归属：最近一次签收若明确归接班班次所有，则不计入本交出班次的交接单
     const owner = ownerMap[it.item_key];
     if (owner != null && owner !== Number(shift_id)) continue;
+    // 该事项已在另一张未签收交接单中 → 不重复汇集，记录归属以便提示
+    if (busySet.has(it.item_key)) {
+      skipped.push(it.item_key);
+      continue;
+    }
     await query(
       `INSERT INTO shift_handover_items
          (handover_id, item_type, item_key, ref_id, title, subtitle, detail, snapshot, source_item_id)
@@ -131,7 +138,7 @@ router.post('/', async (req, res) => {
     appended += 1;
   }
 
-  res.status(201).json({ ...doc[0], collected: appended });
+  res.status(201).json({ ...doc[0], collected: appended, skipped_count: skipped.length, skipped_keys: skipped });
 });
 
 // 交接单详情（含事项实时变化提示 / 签收后去向）
@@ -168,15 +175,17 @@ router.get('/:id', async (req, res) => {
     followups = await buildFollowups(items, now);
   }
 
-  // 现场可追加的新事项（交接期间新出现、且责任属于交出班次的作业）
+  // 现场可追加的新事项（交接期间新出现、责任属于交出班次、且未在其他未签收单中）
   let appendable = [];
   if (OPEN_STATUSES.includes(doc.status)) {
     const liveItems = await buildLiveItems(now);
     const ownerMap = await getLatestOwnerMap();
+    const busySet = await getBusyItemKeys(doc.id); // 排除本单自身，其余未签收单中的事项不可再追加
     const existing = new Set(items.map((i) => i.item_key));
     const sourceMap = await getSourceItemIds(liveItems.map((i) => i.item_key));
     appendable = liveItems
       .filter((it) => !existing.has(it.item_key))
+      .filter((it) => !busySet.has(it.item_key))
       .filter((it) => ownerMap[it.item_key] == null || ownerMap[it.item_key] === doc.shift_id)
       .map((it) => ({ ...it, source_item_id: sourceMap[it.item_key] || null }));
   }
@@ -225,6 +234,18 @@ router.post('/:id/items', async (req, res) => {
   );
   if (exists.length) return res.status(409).json({ error: '该事项已在交接单中' });
 
+  // 现场事项（非口头补充）若已在另一张未签收单中，不允许重复加入
+  if (item_type !== 'note') {
+    const busy = await query(
+      `SELECT 1 FROM shift_handover_items i
+       JOIN shift_handovers h ON h.id = i.handover_id
+       WHERE i.item_key = $1 AND h.status IN ('draft','pending') AND h.id <> $2
+       LIMIT 1`,
+      [item_key, doc.id]
+    );
+    if (busy.length) return res.status(409).json({ error: '该事项已在另一张未签收交接单中，不能重复移交' });
+  }
+
   const rows = await query(
     `INSERT INTO shift_handover_items
        (handover_id, item_type, item_key, ref_id, title, subtitle, detail, snapshot, source_item_id, is_appended)
@@ -250,6 +271,25 @@ router.put('/items/:itemId/decision', async (req, res) => {
   if (doc.status === 'signed') return res.status(409).json({ error: '交接单已签收，接收结果不可更改' });
   if (doc.status !== 'pending') return res.status(409).json({ error: '交接单尚未提交签收，或已取消' });
   if (item.status === 'resolved') return res.status(409).json({ error: '该事项已在交接期间完成，无需接收' });
+
+  // 提交签收后现场作业仍在继续：决定的瞬间必须实时核对现场，
+  // 不能只看库里事项的旧状态（GET 自动确认可能尚未跑）。
+  if (status !== 'pending' && item.item_type !== 'note') {
+    const { state, changeLabel } = await evaluateItem(item, new Date());
+    if (state === 'resolved') {
+      // 作业已完成（如已装车、已发车、拦截已解除）→ 自动确认，拒绝按旧状态接收
+      await query(
+        `UPDATE shift_handover_items
+         SET status = 'resolved', resolved_at = NOW(), resolved_note = $1
+         WHERE id = $2 AND status = 'pending'`,
+        [changeLabel, item.id]
+      );
+      return res.status(409).json({
+        error: `该事项已在交接期间完成（${changeLabel}），系统已自动确认，无需${status === 'accepted' ? '接收' : '退回'}`,
+        code: 'ITEM_AUTO_RESOLVED',
+      });
+    }
+  }
 
   if (status === 'pending') {
     await query(

@@ -184,7 +184,8 @@ function CreateHandoverModal({ shifts, activeShift, onClose, onCreated }) {
     if (Number(fromId) === Number(toId)) { toast('交出与接班班次不能相同', 'error'); return; }
     try {
       const d = await api.createHandover({ shift_id: fromId, to_shift_id: toId, summary_note: note, created_by: createdBy });
-      toast(`交接单 ${d.handover_no} 已生成，汇集 ${d.collected} 项`, 'success');
+      toast(`交接单 ${d.handover_no} 已生成，汇集 ${d.collected} 项`
+        + (d.skipped_count ? `，${d.skipped_count} 项已在其他未签收单中，未重复汇集` : ''), 'success');
       onCreated(d.id);
     } catch (e) { toast(e.message, 'error'); }
   };

@@ -140,6 +140,21 @@ export async function getSourceItemIds(keys) {
   return Object.fromEntries(rows.map((r) => [r.item_key, r.source_item_id]));
 }
 
+// 已在"其他未签收交接单（草稿/待签收）"中出现的事项。
+// 同一现场事项同一时刻只能在一张未签收单里，防止不同交出班次重复汇集、重复移交。
+// excludeHandoverId 用于"给本单追加事项"时排除自身。
+export async function getBusyItemKeys(excludeHandoverId = null) {
+  const rows = await query(
+    `SELECT DISTINCT i.item_key
+     FROM shift_handover_items i
+     JOIN shift_handovers h ON h.id = i.handover_id
+     WHERE h.status IN ('draft','pending')
+       AND ($1::int IS NULL OR h.id <> $1)`,
+    [excludeHandoverId]
+  );
+  return new Set(rows.map((r) => r.item_key));
+}
+
 // ───────────────────────────── 交接期间变化检测 ─────────────────────────────
 
 // 对照现场实时数据，判定一条事项是否在交接期间被完成/发生变化

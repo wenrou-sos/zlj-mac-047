@@ -36,7 +36,7 @@ function ItemGroup({ type, items, open: isOpen, openGroup, followups, onDecide, 
           {items.map((it) => (
             <ItemRow
               key={it.id} item={it} followup={followups ? followups[String(it.id)] : null}
-              onDecide={onDecide} receiverName={receiverName}
+              onDecide={onDecide} onChanged={onChanged} receiverName={receiverName}
             />
           ))}
         </div>
@@ -45,7 +45,7 @@ function ItemGroup({ type, items, open: isOpen, openGroup, followups, onDecide, 
   );
 }
 
-function ItemRow({ item, followup, onDecide, receiverName }) {
+function ItemRow({ item, followup, onDecide, onChanged, receiverName }) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState(item.item_note || '');
@@ -144,7 +144,12 @@ function ItemRow({ item, followup, onDecide, receiverName }) {
                     await api.decideItem(item.id, { status: 'returned', decision_note: reason, decided_by: receiverName });
                     toast('已退回，仍由交出班次负责', 'success');
                     setReturning(false); setReason('');
-                  } catch (e) { toast(e.message, 'error'); }
+                    onChanged();
+                  } catch (e) {
+                    toast(e.message, 'error');
+                    setReturning(false); setReason('');
+                    onChanged();
+                  }
                 }}>
                 <Undo2 size={13} /> 确认退回
               </button>
@@ -192,7 +197,11 @@ export default function HandoverDetail({ detail, onBack, onChanged }) {
         : { status, decided_by: receiverName });
       toast(status === 'accepted' ? '已接收' : status === 'pending' ? '已撤回' : '已处理', 'success');
       onChanged();
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) {
+      // 现场在点击瞬间已完成等情况：服务端已自动确认，刷新让该项变为"作业已完成"
+      toast(e.message, 'error');
+      onChanged();
+    }
   };
 
   const appendLive = async (it) => {
