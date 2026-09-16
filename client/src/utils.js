@@ -24,6 +24,39 @@ export const ABNORMAL_TYPES = {
   address_issue: '地址信息异常',
 };
 
+// 车型：决定可适配的月台
+export const VEHICLE_TYPES = {
+  small:       { label: '小型车', color: '#1d4ed8', bg: '#dbeafe' },
+  medium:      { label: '中型车', color: '#0f766e', bg: '#ccfbf1' },
+  large:       { label: '大型车', color: '#b45309', bg: '#fef3c7' },
+  extra_large: { label: '特大车', color: '#b91c1c', bg: '#fee2e2' },
+};
+
+export const APPOINTMENT_STATUS = {
+  booked:    { label: '已预约', color: '#475569', bg: '#f1f5f9' },
+  checked:   { label: '候叫中', color: '#1d4ed8', bg: '#dbeafe' },
+  called:    { label: '已叫号', color: '#7c3aed', bg: '#ede9fe' },
+  unloading: { label: '卸车中', color: '#b45309', bg: '#fef3c7' },
+  completed: { label: '已完成', color: '#15803d', bg: '#dcfce7' },
+  cancelled: { label: '已取消', color: '#94a3b8', bg: '#f1f5f9' },
+};
+
+// 分钟差，负数返回 null
+export const minutesBetween = (from, to) => {
+  if (!from || !to) return null;
+  const d = (new Date(to) - new Date(from)) / 60000;
+  return d < 0 ? null : Math.round(d);
+};
+
+// 时长格式化：72 -> "1时12分"，12 -> "12分"
+export const fmtDur = (mins) => {
+  if (mins === null || mins === undefined || Number.isNaN(mins)) return '—';
+  if (mins < 1) return '不足1分';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h ? `${h}时${String(m).padStart(2, '0')}分` : `${m}分`;
+};
+
 export const fmtTime = (t) => {
   if (!t) return '—';
   const d = new Date(t);

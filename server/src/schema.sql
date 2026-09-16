@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   is_late          BOOLEAN NOT NULL DEFAULT FALSE,
   priority         INTEGER NOT NULL DEFAULT 100,    -- 数值越大越靠前；有理由插队时调整
   priority_reason  TEXT,
+  requeued         BOOLEAN NOT NULL DEFAULT FALSE,  -- 叫号后被召回而重新排队（排在迟到车之后）
   reschedule_count INTEGER NOT NULL DEFAULT 0,
   reschedule_reason TEXT,
   recall_reason    TEXT,
@@ -102,7 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_vehicles_status    ON vehicles(status);
 CREATE INDEX IF NOT EXISTS idx_appointments_vehicle ON appointments(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_status ON appointments(status);
 CREATE INDEX IF NOT EXISTS idx_appointments_queue
-  ON appointments(priority DESC, is_late ASC, slot_start ASC, queue_seq ASC)
+  ON appointments(requeued ASC, priority DESC, is_late ASC, slot_start ASC, queue_seq ASC)
   WHERE status = 'checked';
 
 -- 同一月台同一时间只能有一条未释放占用；同一预约也不能重复占用月台
@@ -134,6 +135,10 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='ck_assignments_status') THEN
     ALTER TABLE dock_assignments
       ADD CONSTRAINT ck_assignments_status CHECK (status IN ('assigned','in_use','released','cancelled'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_name='appointments' AND column_name='requeued') THEN
+    ALTER TABLE appointments ADD COLUMN requeued BOOLEAN NOT NULL DEFAULT FALSE;
   END IF;
 END $$;
 

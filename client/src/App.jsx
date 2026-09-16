@@ -1,15 +1,17 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
-import { LayoutDashboard, Truck, Package, BarChart3, CheckCircle2, XCircle, Boxes } from 'lucide-react';
+import { LayoutDashboard, Truck, Package, BarChart3, CheckCircle2, XCircle, Boxes, Warehouse } from 'lucide-react';
 import Dashboard from './pages/Dashboard.jsx';
 import Vehicles from './pages/Vehicles.jsx';
 import Packages from './pages/Packages.jsx';
 import Stats from './pages/Stats.jsx';
+import DockBoard from './pages/DockBoard.jsx';
 
 const ToastCtx = createContext(() => {});
 export const useToast = () => useContext(ToastCtx);
 
 const PAGES = [
   { key: 'dashboard', label: '监控总览', icon: LayoutDashboard },
+  { key: 'docks', label: '月台调度', icon: Warehouse },
   { key: 'vehicles', label: '车辆班次', icon: Truck },
   { key: 'packages', label: '包裹与拦截', icon: Package },
   { key: 'stats', label: '积压统计', icon: BarChart3 },
@@ -58,7 +60,8 @@ export default function App() {
 
         <main className="main">
           {page === 'dashboard' && <Dashboard onAlertCount={setAlertCount} goVehicles={() => setPage('vehicles')} />}
-          {page === 'vehicles' && <Vehicles />}
+          {page === 'docks' && <DockBoard />}
+          {page === 'vehicles' && <Vehicles goDocks={() => setPage('docks')} />}
           {page === 'packages' && <Packages />}
           {page === 'stats' && <Stats />}
         </main>
