@@ -93,7 +93,39 @@ export const VEHICLE_STATUS_LABEL = {
 };
 
 export const PACKAGE_STATUS_LABEL = {
-  pending: '待分拣', sorted: '已分拣', loaded: '已装车', intercepted: '已拦截',
+  pending: '待分拣',
+  sorted: '已分拣',
+  loaded: '已装车',
+  departed: '已离场',
+  lost: '盘亏',
+};
+
+export const INTERCEPT_STATUS_LABEL = {
+  none: '未拦截',
+  held: '拦截中',
+  released: '已解除',
+};
+
+export const LOCATION_TYPE_LABEL = {
+  receiving: '到件暂存',
+  sorting: '分拣区',
+  storage: '场区库位',
+  intercept: '拦截隔离',
+  vehicle: '车辆库位',
+  lost: '盘亏虚拟库位',
+};
+
+export const STOCKTAKE_STATUS_LABEL = {
+  counting: '盘点中',
+  reviewing: '待复核',
+  adjusted: '已调整',
+  cancelled: '已取消',
+};
+
+export const DIFF_TYPE_LABEL = {
+  surplus: '盘盈',
+  shortage: '盘亏',
+  misplaced: '错位',
 };
 
 export const ABNORMAL_TYPE_LABEL = {

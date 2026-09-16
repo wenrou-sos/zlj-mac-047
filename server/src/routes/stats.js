@@ -18,10 +18,10 @@ router.get('/overview', async (req, res) => {
   const [pkgStats] = await query(
     `SELECT
        COUNT(*)::int                                        AS total,
-       COUNT(*) FILTER (WHERE status = 'pending')::int      AS pending,
-       COUNT(*) FILTER (WHERE status = 'sorted')::int       AS sorted,
-       COUNT(*) FILTER (WHERE status = 'loaded')::int       AS loaded,
-       COUNT(*) FILTER (WHERE status = 'intercepted')::int  AS intercepted
+       COUNT(*) FILTER (WHERE status = 'pending' AND intercept_status <> 'held')::int      AS pending,
+       COUNT(*) FILTER (WHERE status = 'sorted' AND intercept_status <> 'held')::int       AS sorted,
+       COUNT(*) FILTER (WHERE status IN ('loaded','departed'))::int                         AS loaded,
+       COUNT(*) FILTER (WHERE intercept_status = 'held')::int  AS intercepted
      FROM packages`
   );
   const vehicles = await query(`SELECT * FROM vehicles WHERE status NOT IN ('departed','expected')`);
@@ -43,25 +43,52 @@ router.get('/alerts', async (req, res) => {
 
 // 积压统计：按状态 / 按目的地 / 按在途车辆
 router.get('/stats/backlog', async (req, res) => {
+  // 积压按作业生命周期统计；拦截中单独保留，不把“处置状态”和“位置/作业状态”混成一类
   const byStatus = await query(
-    `SELECT status, COUNT(*)::int AS count, COALESCE(SUM(weight_kg),0)::float AS weight
-     FROM packages WHERE status IN ('pending','sorted')
-     GROUP BY status`
+    `SELECT
+       CASE WHEN intercept_status = 'held' THEN 'held' ELSE status END AS status,
+       COUNT(*)::int AS count, COALESCE(SUM(weight_kg),0)::float AS weight
+     FROM packages
+     WHERE status IN ('pending','sorted','lost') OR intercept_status = 'held'
+     GROUP BY 1`
   );
   const byDestination = await query(
-    `SELECT destination, COUNT(*)::int AS count
-     FROM packages WHERE status IN ('pending','sorted')
-     GROUP BY destination ORDER BY count DESC`
+    `SELECT destination,
+       COUNT(*) FILTER (WHERE status IN ('pending','sorted') AND intercept_status <> 'held')::int AS count,
+       COUNT(*) FILTER (WHERE intercept_status = 'held')::int AS held_count
+     FROM packages
+     WHERE status IN ('pending','sorted') OR intercept_status = 'held'
+     GROUP BY destination
+     HAVING COUNT(*) FILTER (WHERE status IN ('pending','sorted')) > 0
+        OR COUNT(*) FILTER (WHERE intercept_status = 'held') > 0
+     ORDER BY count DESC`
+  );
+  const byLocation = await query(
+    `SELECT l.id, l.code, l.name, l.loc_type, l.capacity,
+       COUNT(p.id)::int AS occupied,
+       COUNT(p.id) FILTER (WHERE p.status = 'pending' AND p.intercept_status <> 'held')::int AS pending,
+       COUNT(p.id) FILTER (WHERE p.status = 'sorted' AND p.intercept_status <> 'held')::int AS sorted,
+       COUNT(p.id) FILTER (WHERE p.intercept_status = 'held')::int AS held
+     FROM locations l
+     LEFT JOIN packages p ON p.current_location_id = l.id
+     WHERE l.loc_type IN ('receiving','sorting','storage','intercept') AND l.is_active = TRUE
+     GROUP BY l.id
+     HAVING COUNT(p.id) > 0
+     ORDER BY (
+       COUNT(p.id) FILTER (WHERE p.status IN ('pending','sorted') AND p.intercept_status <> 'held')
+     ) DESC, l.code`
   );
   const byVehicle = await query(
     `SELECT v.id, v.plate_no, v.route_code, v.status,
-            COUNT(p.id) FILTER (WHERE p.status = 'pending')::int AS pending,
-            COUNT(p.id) FILTER (WHERE p.status = 'sorted')::int  AS sorted
+            COUNT(p.id) FILTER (WHERE p.status = 'pending' AND p.intercept_status <> 'held')::int AS pending,
+            COUNT(p.id) FILTER (WHERE p.status = 'sorted' AND p.intercept_status <> 'held')::int  AS sorted,
+            COUNT(p.id) FILTER (WHERE p.intercept_status = 'held')::int AS held
      FROM vehicles v
      JOIN packages p ON p.vehicle_id = v.id
      WHERE v.status NOT IN ('departed','expected')
      GROUP BY v.id
      HAVING COUNT(p.id) FILTER (WHERE p.status IN ('pending','sorted')) > 0
+        OR COUNT(p.id) FILTER (WHERE p.intercept_status = 'held') > 0
      ORDER BY pending DESC`
   );
   // 近24小时按小时的到件/分拣趋势
@@ -78,7 +105,7 @@ router.get('/stats/backlog', async (req, res) => {
            AND sorted_at <  NOW() - h * INTERVAL '1 hour') AS sorted
      FROM hours ORDER BY h DESC`
   );
-  res.json({ byStatus, byDestination, byVehicle, trend });
+  res.json({ byStatus, byDestination, byLocation, byVehicle, trend });
 });
 
 // 异常件统计
@@ -99,7 +126,7 @@ router.get('/stats/abnormal', async (req, res) => {
   const [summary] = await query(
     `SELECT
        COUNT(*) FILTER (WHERE intercepted_at IS NOT NULL)::int         AS total_abnormal,
-       COUNT(*) FILTER (WHERE status = 'intercepted')::int            AS intercepted,
+       COUNT(*) FILTER (WHERE intercept_status = 'held')::int            AS intercepted,
        COUNT(*) FILTER (WHERE intercept_released_at IS NOT NULL)::int AS released
      FROM packages`
   );

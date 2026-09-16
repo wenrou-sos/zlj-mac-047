@@ -12,7 +12,7 @@ const DATA_DIR = process.env.PGDATA || path.join(__dirname, '..', 'data');
 let db;
 
 if (process.env.DATABASE_URL) {
-  // 真实 PostgreSQL 服务器模式
+  // 真实 PostgreSQL 服务器模式：事务内必须固定使用同一个连接
   const { default: pg } = await import('pg').catch(() => {
     throw new Error('使用 DATABASE_URL 需要先安装 pg: npm i pg');
   });
@@ -25,13 +25,31 @@ if (process.env.DATABASE_URL) {
     async exec(text) {
       await pool.query(text);
     },
+    async withTransaction(work) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const tx = async (text, params = []) => client.query(text, params).then((r) => r.rows);
+        tx.query = tx;
+        tx.exec = (text) => client.query(text);
+        const result = await work(tx);
+        await client.query('COMMIT');
+        return result;
+      } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
+    },
   };
   console.log('[db] 使用 PostgreSQL 服务器:', process.env.DATABASE_URL.replace(/\/\/.*@/, '//***@'));
 } else {
-  // PGlite 嵌入式模式（默认）
+  // PGlite 嵌入式模式（默认）。单连接事务需串行执行，避免不同请求的事务语句交错。
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const pglite = new PGlite(DATA_DIR);
   await pglite.waitReady;
+  let txChain = Promise.resolve();
   db = {
     async query(text, params = []) {
       const res = await pglite.query(text, params);
@@ -40,10 +58,30 @@ if (process.env.DATABASE_URL) {
     async exec(text) {
       await pglite.exec(text);
     },
+    withTransaction(work) {
+      const run = txChain.then(async () => {
+        const tx = async (text, params = []) => pglite.query(text, params).then((r) => r.rows);
+        tx.query = tx;
+        tx.exec = (text) => pglite.exec(text);
+        try {
+          await pglite.query('BEGIN');
+          const result = await work(tx);
+          await pglite.query('COMMIT');
+          return result;
+        } catch (e) {
+          await pglite.query('ROLLBACK').catch(() => {});
+          throw e;
+        }
+      });
+      // 串行链：下一个事务必须等当前事务提交/回滚后才能开始
+      txChain = run.catch(() => {});
+      return run;
+    },
   };
   console.log('[db] 使用嵌入式 PGlite，数据目录:', DATA_DIR);
 }
 
 export const query = (text, params) => db.query(text, params);
 export const exec = (text) => db.exec(text);
+export const withTransaction = (work) => db.withTransaction(work);
 export default db;

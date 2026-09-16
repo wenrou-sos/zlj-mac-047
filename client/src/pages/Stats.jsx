@@ -7,7 +7,7 @@ import {
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
 import { Badge, Empty } from '../components/common.jsx';
-import { VEHICLE_STATUS, ABNORMAL_TYPES, fmtDateTime } from '../utils.js';
+import { VEHICLE_STATUS, ABNORMAL_TYPES, LOCATION_TYPES, fmtDateTime } from '../utils.js';
 
 const ABNORMAL_COLORS = ['#ef4444', '#f97316', '#eab308', '#8b5cf6', '#06b6d4'];
 
@@ -46,7 +46,15 @@ export default function Stats() {
 
   if (!backlog || !abnormal || !settings) return <div className="empty">加载中…</div>;
 
-  const backlogTotal = backlog.byStatus.reduce((s, x) => s + x.count, 0);
+  const statusRows = backlog.byStatus.map((x) => ({
+    ...x,
+    label: x.status === 'held' ? '拦截留置' : x.status === 'pending' ? '待分拣' : x.status === 'sorted' ? '已分拣未装车' : x.status === 'lost' ? '盘亏挂账' : x.status,
+  }));
+  const operationTotal = backlog.byStatus
+    .filter((x) => ['pending', 'sorted'].includes(x.status))
+    .reduce((s, x) => s + x.count, 0);
+  const heldTotal = backlog.byStatus.find((x) => x.status === 'held')?.count || 0;
+  const backlogTotal = operationTotal + heldTotal;
   const trendData = backlog.trend.map((t) => ({
     name: `${24 - backlog.trend.indexOf(t) - 1}h前`,
     到件: t.arrived,
@@ -58,7 +66,7 @@ export default function Stats() {
       <div className="page-header">
         <div>
           <h1>积压统计</h1>
-          <div className="sub">当前积压 <b style={{ color: 'var(--amber)' }}>{backlogTotal}</b> 件（待分拣 + 已分拣未装车）</div>
+          <div className="sub">当前积压 <b style={{ color: 'var(--amber)' }}>{backlogTotal}</b> 件（待分拣/已分拣 {operationTotal}，拦截留置 {heldTotal}），可在「库位与盘点」定位具体库位</div>
         </div>
         <button className="btn" onClick={load}><RefreshCw size={14} /> 刷新</button>
       </div>
@@ -78,6 +86,30 @@ export default function Stats() {
               <Area type="monotone" dataKey="分拣完成" stroke="#22c55e" fill="#dcfce7" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* 按库位积压：解决“数得出、找不到”的定位问题 */}
+      <div className="card section-gap">
+        <div className="card-header"><h3>积压定位（按场区库位）</h3></div>
+        <div className="table-wrap">
+          <table className="tbl">
+            <thead><tr><th>库位</th><th>类型</th><th>在场件</th><th>待分拣</th><th>已分拣</th><th>拦截留置</th><th>容量占用</th></tr></thead>
+            <tbody>
+              {backlog.byLocation.map((l) => (
+                <tr key={l.id}>
+                  <td><b>{l.code}</b><div className="text-muted">{l.name}</div></td>
+                  <td><span className="badge" style={{ color: LOCATION_TYPES[l.loc_type]?.color, background: LOCATION_TYPES[l.loc_type]?.bg }}><span className="dot" />{LOCATION_TYPES[l.loc_type]?.label || l.loc_type}</span></td>
+                  <td className="mono">{l.occupied}</td>
+                  <td className="mono" style={{ color: l.pending ? 'var(--amber)' : undefined, fontWeight: l.pending ? 700 : 400 }}>{l.pending}</td>
+                  <td className="mono">{l.sorted}</td>
+                  <td className="mono" style={{ color: l.held ? 'var(--red)' : undefined, fontWeight: l.held ? 700 : 400 }}>{l.held}</td>
+                  <td>{l.capacity ? `${l.occupied}/${l.capacity}` : '不限'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {backlog.byLocation.length === 0 && <Empty text="当前无在场定位件" />}
         </div>
       </div>
 
@@ -199,7 +231,7 @@ export default function Stats() {
                   <td className="text-muted">{p.abnormal_note || '—'}</td>
                   <td className="mono text-muted">{fmtDateTime(p.intercepted_at)}</td>
                   <td>
-                    {p.status === 'intercepted'
+                    {p.intercept_status === 'held'
                       ? <span className="badge" style={{ color: '#b91c1c', background: '#fee2e2' }}><span className="dot" />拦截中</span>
                       : <span className="badge" style={{ color: '#15803d', background: '#dcfce7' }}><span className="dot" />已解除</span>}
                   </td>

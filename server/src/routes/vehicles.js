@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { VEHICLE_FLOW } from '../helpers.js';
+import { bulkLoadVehiclePackages, bulkSortVehiclePackages } from './packages.js';
 
 const router = Router();
 
@@ -17,10 +18,10 @@ router.get('/', async (req, res) => {
   const rows = await query(
     `SELECT v.*,
        COUNT(p.id)::int                                          AS package_count,
-       COUNT(p.id) FILTER (WHERE p.status = 'pending')::int      AS pending_count,
-       COUNT(p.id) FILTER (WHERE p.status = 'sorted')::int       AS sorted_count,
+       COUNT(p.id) FILTER (WHERE p.status = 'pending' AND p.intercept_status <> 'held')::int      AS pending_count,
+       COUNT(p.id) FILTER (WHERE p.status = 'sorted' AND p.intercept_status <> 'held')::int       AS sorted_count,
        COUNT(p.id) FILTER (WHERE p.status = 'loaded')::int       AS loaded_count,
-       COUNT(p.id) FILTER (WHERE p.status = 'intercepted')::int  AS intercepted_count
+       COUNT(p.id) FILTER (WHERE p.intercept_status = 'held')::int AS intercepted_count
      FROM vehicles v
      LEFT JOIN packages p ON p.vehicle_id = v.id
      ${where}
@@ -63,20 +64,13 @@ router.post('/:id/action/:action', async (req, res) => {
     [flow.to, id]
   );
 
-  // 完成分拣：车上所有待分拣包裹自动标记为已分拣（拦截件除外）
+  // 完成分拣：车上所有未拦截待分拣包裹自动分拣并上架到场区存储库位
   if (action === 'sort-end') {
-    await query(
-      `UPDATE packages SET status = 'sorted', sorted_at = NOW()
-       WHERE vehicle_id = $1 AND status = 'pending'`,
-      [id]
-    );
+    await bulkSortVehiclePackages(id);
   }
-  // 发车：已分拣包裹自动装车；拦截件留在场地，不随车发走
+  // 发车：已分拣未拦截包裹自动装车到车辆库位；拦截件留置场区，不随车发走
   if (action === 'depart') {
-    await query(
-      `UPDATE packages SET status = 'loaded' WHERE vehicle_id = $1 AND status = 'sorted'`,
-      [id]
-    );
+    await bulkLoadVehiclePackages(id);
   }
 
   res.json(rows[0]);

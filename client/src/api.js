@@ -28,6 +28,26 @@ export const api = {
   loadPackage: (id) => request(`/api/packages/${id}/load`, { method: 'POST' }),
   interceptPackage: (id, body) => request(`/api/packages/${id}/intercept`, { method: 'POST', body: JSON.stringify(body) }),
   releasePackage: (id) => request(`/api/packages/${id}/release`, { method: 'POST' }),
+  // 库位与盘点
+  locations: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== '' && v != null)).toString();
+    return request(`/api/locations${qs ? `?${qs}` : ''}`);
+  },
+  createLocation: (body) => request('/api/locations', { method: 'POST', body: JSON.stringify(body) }),
+  disableLocation: (id) => request(`/api/locations/${id}/disable`, { method: 'POST' }),
+  movePackage: (body) => request('/api/locations/move', { method: 'POST', body: JSON.stringify(body) }),
+  stocktakes: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== '' && v != null)).toString();
+    return request(`/api/stocktakes${qs ? `?${qs}` : ''}`);
+  },
+  stocktake: (id) => request(`/api/stocktakes/${id}`),
+  createStocktake: (body) => request('/api/stocktakes', { method: 'POST', body: JSON.stringify(body) }),
+  scanStocktake: (id, body) => request(`/api/stocktakes/${id}/scan`, { method: 'POST', body: JSON.stringify(body) }),
+  completeStocktake: (id) => request(`/api/stocktakes/${id}/complete`, { method: 'POST' }),
+  reviewDifference: (stocktakeId, diffId, body) =>
+    request(`/api/stocktakes/${stocktakeId}/differences/${diffId}/review`, { method: 'PUT', body: JSON.stringify(body) }),
+  adjustStocktake: (id) => request(`/api/stocktakes/${id}/adjust`, { method: 'POST' }),
+  cancelStocktake: (id) => request(`/api/stocktakes/${id}/cancel`, { method: 'POST' }),
   // 统计
   backlog: () => request('/api/stats/backlog'),
   abnormalStats: () => request('/api/stats/abnormal'),

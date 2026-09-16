@@ -43,10 +43,25 @@ cd client && npm install && npm run dev      # http://localhost:5173
 
 ### 4. 积压统计
 - 近 24 小时到件/分拣趋势图
-- 按目的地、按车辆的积压分布
+- 按目的地、按车辆、按场区库位的积压分布
 - 在场车辆积压明细表
 
-### 5. 异常件拦截
+### 5. 场区库位与滚动盘点
+- 场区库位维护：到件暂存、分拣区、存储货架、拦截隔离区、车辆库位
+- 到件自动进入 `RECV-01`；分拣后可自动/指定上架，支持人工移位，所有变更写入位置流水
+- 每件包裹始终只有一个 `current_location_id`，车辆也是装车后的有效位置
+- 按选定库位发起滚动盘点，先冻结**盘点时点账存快照**，但不封锁现场作业
+- 盘点期间到件、上架、移位、装车继续执行；系统按 `snapshot_at ~ completed_at` 的位置流水区分：
+  - 期间移入/新到件：不计盘盈
+  - 期间移出：不计盘亏
+  - 期间装车/发运：按流水核销，不能把刚发走的件判成丢失
+- 记录盘盈、盘亏、错位；结束实盘后逐条复核，确认后才调整账面
+  - 盘盈：补录包裹并落到实盘库位
+  - 盘亏：状态置为 `lost`，位置移入 `LOST-01`
+  - 错位：账面位置调整到实盘库位
+- 拦截处置状态（未拦截/拦截中/已解除）与作业状态、物理位置分离；拦截件留在原位并禁止装车，解除拦截不改变位置
+
+### 6. 异常件拦截
 - 五种异常类型：外包装破损 / 错分线路 / 超重超限 / 疑似违禁品 / 地址信息异常
 - 拦截后**禁止装车**（后端强制校验），处理完成后可解除拦截
 - 异常类型分布统计与最近拦截记录
@@ -76,10 +91,17 @@ cd server && npm run seed -- --force
 | GET/PUT | `/api/settings` | 超时规则 |
 | GET/POST | `/api/vehicles` | 班次列表 / 到车预报 |
 | POST | `/api/vehicles/:id/action/:action` | 状态推进（arrive / unload-start / unload-end / sort-start / sort-end / depart） |
-| GET/POST | `/api/packages` | 包裹查询 / 到件登记 |
-| POST | `/api/packages/:id/sort` `/load` | 分拣 / 装车 |
-| POST | `/api/packages/:id/intercept` `/release` | 拦截 / 解除拦截 |
-| GET | `/api/stats/backlog` `/api/stats/abnormal` | 积压 / 异常统计 |
+| GET/POST | `/api/packages` | 包裹查询 / 到件登记（自动定位） |
+| POST | `/api/packages/:id/sort` `/load` | 分拣上架 / 装车 |
+| POST | `/api/packages/:id/intercept` `/release` | 拦截 / 解除拦截（不改位置） |
+| GET/POST | `/api/locations` | 场区库位查询 / 新建 |
+| POST | `/api/locations/move` | 包裹上架/移位 |
+| GET/POST | `/api/stocktakes` | 盘点单列表 / 按库位发起滚动盘点 |
+| POST | `/api/stocktakes/:id/scan` | 实盘扫描 |
+| POST | `/api/stocktakes/:id/complete` | 结束实盘并核对期间流转 |
+| PUT | `/api/stocktakes/:id/differences/:diffId/review` | 差异复核（确认/驳回） |
+| POST | `/api/stocktakes/:id/adjust` | 复核后统一调整账面 |
+| GET | `/api/stats/backlog` `/api/stats/abnormal` | 积压（含库位） / 异常统计 |
 
 ## 目录结构
 
@@ -92,9 +114,10 @@ express-hub/
 │       ├── schema.sql      # 表结构
 │       ├── seed.js         # 模拟数据
 │       ├── helpers.js      # 超时预警计算、状态机
-│       └── routes/         # vehicles / packages / stats
+│       ├── inventory.js    # 车辆库位、位置流水等共享逻辑
+│       └── routes/         # vehicles / packages / locations / stocktakes / stats
 └── client/                 # React 前端
     └── src/
-        ├── pages/          # 总览 / 车辆 / 包裹 / 统计
+        ├── pages/          # 总览 / 车辆 / 包裹 / 库位盘点 / 统计
         └── components/     # 通用组件
 ```

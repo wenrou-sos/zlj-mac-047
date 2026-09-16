@@ -13,7 +13,36 @@ export const PACKAGE_STATUS = {
   pending:     { label: '待分拣', color: '#b45309', bg: '#fef3c7' },
   sorted:      { label: '已分拣', color: '#7c3aed', bg: '#ede9fe' },
   loaded:      { label: '已装车', color: '#15803d', bg: '#dcfce7' },
-  intercepted: { label: '已拦截', color: '#b91c1c', bg: '#fee2e2' },
+  departed:    { label: '已离场', color: '#047857', bg: '#a7f3d0' },
+  lost:        { label: '盘亏', color: '#6b21a8', bg: '#f3e8ff' },
+};
+
+export const INTERCEPT_STATUS = {
+  none:     { label: '未拦截', color: '#64748b', bg: '#f1f5f9' },
+  held:     { label: '拦截中', color: '#b91c1c', bg: '#fee2e2' },
+  released: { label: '已解除', color: '#15803d', bg: '#dcfce7' },
+};
+
+export const LOCATION_TYPES = {
+  receiving: { label: '到件暂存', color: '#1d4ed8', bg: '#dbeafe' },
+  sorting:   { label: '分拣区', color: '#7c3aed', bg: '#ede9fe' },
+  storage:   { label: '场区库位', color: '#0f766e', bg: '#ccfbf1' },
+  intercept: { label: '拦截隔离', color: '#b91c1c', bg: '#fee2e2' },
+  vehicle:   { label: '车辆库位', color: '#15803d', bg: '#dcfce7' },
+  lost:      { label: '盘亏库位', color: '#6b21a8', bg: '#f3e8ff' },
+};
+
+export const STOCKTAKE_STATUS = {
+  counting:  { label: '盘点中', color: '#b45309', bg: '#fef3c7' },
+  reviewing: { label: '待复核', color: '#1d4ed8', bg: '#dbeafe' },
+  adjusted:  { label: '已调整', color: '#15803d', bg: '#dcfce7' },
+  cancelled: { label: '已取消', color: '#64748b', bg: '#f1f5f9' },
+};
+
+export const DIFF_TYPES = {
+  surplus:   { label: '盘盈', color: '#15803d', bg: '#dcfce7' },
+  shortage:  { label: '盘亏', color: '#b91c1c', bg: '#fee2e2' },
+  misplaced: { label: '错位', color: '#b45309', bg: '#fef3c7' },
 };
 
 export const ABNORMAL_TYPES = {

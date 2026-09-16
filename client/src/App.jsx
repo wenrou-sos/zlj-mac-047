@@ -1,8 +1,9 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
-import { LayoutDashboard, Truck, Package, BarChart3, CheckCircle2, XCircle, Boxes } from 'lucide-react';
+import { LayoutDashboard, Truck, Package, BarChart3, CheckCircle2, XCircle, Boxes, ClipboardCheck } from 'lucide-react';
 import Dashboard from './pages/Dashboard.jsx';
 import Vehicles from './pages/Vehicles.jsx';
 import Packages from './pages/Packages.jsx';
+import Inventory from './pages/Inventory.jsx';
 import Stats from './pages/Stats.jsx';
 
 const ToastCtx = createContext(() => {});
@@ -12,6 +13,7 @@ const PAGES = [
   { key: 'dashboard', label: '监控总览', icon: LayoutDashboard },
   { key: 'vehicles', label: '车辆班次', icon: Truck },
   { key: 'packages', label: '包裹与拦截', icon: Package },
+  { key: 'inventory', label: '库位与盘点', icon: ClipboardCheck },
   { key: 'stats', label: '积压统计', icon: BarChart3 },
 ];
 
@@ -60,6 +62,7 @@ export default function App() {
           {page === 'dashboard' && <Dashboard onAlertCount={setAlertCount} goVehicles={() => setPage('vehicles')} />}
           {page === 'vehicles' && <Vehicles />}
           {page === 'packages' && <Packages />}
+          {page === 'inventory' && <Inventory />}
           {page === 'stats' && <Stats />}
         </main>
       </div>
