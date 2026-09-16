@@ -79,7 +79,10 @@ router.post('/:id/load', async (req, res) => {
   if (pkg.status !== 'sorted') {
     return res.status(409).json({ error: '仅已分拣包裹可装车' });
   }
-  const rows = await query(`UPDATE packages SET status = 'loaded' WHERE id = $1 RETURNING *`, [pkg.id]);
+  const rows = await query(
+    `UPDATE packages SET status = 'loaded', loaded_at = NOW() WHERE id = $1 RETURNING *`,
+    [pkg.id]
+  );
   res.json(rows[0]);
 });
 

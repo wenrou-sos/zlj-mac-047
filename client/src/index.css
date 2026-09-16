@@ -87,6 +87,8 @@ body {
   padding: 0 5px;
   font-weight: 600;
 }
+.nav button .nav-badge.nav-badge-amber { background: var(--amber); }
+.nav button.active .nav-badge-amber { box-shadow: 0 0 0 2px rgba(255,255,255,0.25); }
 
 .sidebar .sidebar-footer {
   margin-top: auto;
@@ -316,3 +318,119 @@ table.tbl { width: 100%; border-collapse: collapse; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ── 手持扫描工作台 ── */
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.hh-status {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border-radius: 10px; margin-bottom: 14px;
+  font-size: 13px; font-weight: 500;
+  border: 1px solid;
+}
+.hh-status.online  { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+.hh-status.offline { background: var(--red-bg); border-color: #fecaca; color: var(--red); }
+.hh-status .hh-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: currentColor; display: inline-block; margin-right: 2px;
+}
+.hh-status.online .hh-dot { animation: pulse 2s infinite; }
+.hh-status-left { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hh-status-right { display: flex; align-items: center; gap: 6px; font-size: 12px; opacity: 0.8; }
+.hh-sep { opacity: 0.4; }
+.hh-name-btn {
+  border: 1px dashed currentColor; background: transparent; border-radius: 6px;
+  padding: 1px 8px; font-size: 12px; cursor: pointer; color: inherit;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.hh-name-edit { display: inline-flex; align-items: center; gap: 6px; }
+
+.hh-stats {
+  display: flex; gap: 12px; align-items: stretch; margin-bottom: 16px;
+}
+.hh-stat {
+  flex: 1; background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 16px; box-shadow: var(--shadow);
+  border-left-width: 4px;
+}
+.hh-stat.pending  { border-left-color: var(--amber); }
+.hh-stat.applied  { border-left-color: var(--green); }
+.hh-stat.conflict { border-left-color: var(--red); }
+.hh-stat.error    { border-left-color: var(--red); }
+.hh-stat-value { font-size: 22px; font-weight: 700; line-height: 1.1; }
+.hh-stat-label { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.hh-sync-btn { flex: 0 0 auto; align-self: center; padding: 0 22px; height: 46px; font-size: 14px; }
+
+.hh-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+.hh-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 16px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--card);
+  color: var(--text-2); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all 0.15s;
+}
+.hh-tab:hover { background: #f8fafc; }
+.hh-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 600; }
+
+.hh-batch {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 14px; margin-bottom: 12px; box-shadow: var(--shadow);
+}
+.hh-batch-select { width: auto !important; padding: 5px 10px; font-size: 12px; }
+
+.hh-dock {
+  background: var(--card); border: 1px solid var(--border); border-top-width: 3px;
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 16px; margin-bottom: 16px;
+}
+.hh-dock-arrive { border-top-color: #2563eb; }
+.hh-dock-sort   { border-top-color: #7c3aed; }
+.hh-dock-load   { border-top-color: #0f766e; }
+.hh-dock-main { display: flex; gap: 10px; align-items: center; }
+.hh-dock-icon { color: var(--primary); flex-shrink: 0; }
+.hh-scan-input {
+  flex: 1; padding: 12px 14px; font-size: 16px;
+  border: 2px solid var(--primary); border-radius: 10px;
+  outline: none; letter-spacing: 0.5px; background: #f8fafc;
+}
+.hh-scan-input:focus { box-shadow: 0 0 0 4px #dbeafe; background: #fff; }
+.hh-dock-fields { display: flex; gap: 10px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+.hh-dock-fields .input { width: auto; min-width: 160px; }
+.hh-time-toggle {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--text-2); cursor: pointer; user-select: none;
+}
+
+.hh-queue { margin-bottom: 20px; }
+
+/* 冲突弹窗 */
+.conflict-box {
+  background: var(--red-bg); border: 1px solid #fecaca; border-radius: 10px;
+  padding: 14px 16px; margin-bottom: 14px; color: var(--red);
+}
+.conflict-code { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+.conflict-msg { font-size: 13px; color: var(--text); line-height: 1.6; }
+.conflict-detail {
+  border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  margin-bottom: 14px;
+}
+.conflict-detail > div {
+  display: flex; padding: 9px 14px; font-size: 13px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.conflict-detail > div:last-child { border-bottom: none; }
+.conflict-detail span { width: 96px; color: var(--text-3); flex-shrink: 0; }
+.conflict-actions { display: flex; flex-direction: column; gap: 8px; }
+.conflict-btn { justify-content: flex-start; padding: 10px 14px; width: 100%; }
+.conflict-resolved {
+  padding: 10px 14px; background: #f1f5f9; border-radius: 8px;
+  font-size: 13px; color: var(--text-2);
+}
+
+@media (max-width: 900px) {
+  .hh-stats { flex-wrap: wrap; }
+  .hh-stat { flex: 1 1 40%; }
+  .hh-sync-btn { flex: 1 1 100%; }
+}

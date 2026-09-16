@@ -34,4 +34,24 @@ export const api = {
   // 设置
   settings: () => request('/api/settings'),
   saveSettings: (body) => request('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
+  // 手持扫描工作台
+  scanHeartbeat: (body) => request('/api/scan/devices/heartbeat', { method: 'POST', body: JSON.stringify(body) }),
+  scanSync: (body) => request('/api/scan/sync', { method: 'POST', body: JSON.stringify(body) }),
+  scanLedger: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString();
+    return request(`/api/scan/ledger${qs ? `?${qs}` : ''}`);
+  },
+};
+
+// 仅供离线队列判断连通性使用：失败不抛错，返回布尔
+export const pingServer = async () => {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 4000);
+    const res = await fetch('/api/health', { signal: ctrl.signal });
+    clearTimeout(t);
+    return res.ok;
+  } catch {
+    return false;
+  }
 };

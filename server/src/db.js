@@ -25,6 +25,22 @@ if (process.env.DATABASE_URL) {
     async exec(text) {
       await pool.query(text);
     },
+    // 真实 PostgreSQL：从连接池取一条连接执行 BEGIN/COMMIT，出错回滚
+    async withTransaction(fn) {
+      const client = await pool.connect();
+      const q = (text, params = []) => client.query(text, params).then((r) => r.rows);
+      try {
+        await client.query('BEGIN');
+        const out = await fn(q);
+        await client.query('COMMIT');
+        return out;
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      } finally {
+        client.release();
+      }
+    },
   };
   console.log('[db] 使用 PostgreSQL 服务器:', process.env.DATABASE_URL.replace(/\/\/.*@/, '//***@'));
 } else {
@@ -40,10 +56,19 @@ if (process.env.DATABASE_URL) {
     async exec(text) {
       await pglite.exec(text);
     },
+    // PGlite 单连接嵌入式事务，回调抛错自动 ROLLBACK
+    async withTransaction(fn) {
+      return pglite.transaction(async (tx) => {
+        const q = (text, params = []) => tx.query(text, params).then((r) => r.rows);
+        return fn(q);
+      });
+    },
   };
   console.log('[db] 使用嵌入式 PGlite，数据目录:', DATA_DIR);
 }
 
 export const query = (text, params) => db.query(text, params);
 export const exec = (text) => db.exec(text);
+// 在同一事务中执行：fn 接收事务内的 query 函数；抛错整体回滚
+export const withTransaction = (fn) => db.withTransaction(fn);
 export default db;

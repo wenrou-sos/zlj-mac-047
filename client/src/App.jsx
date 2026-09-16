@@ -1,9 +1,12 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
-import { LayoutDashboard, Truck, Package, BarChart3, CheckCircle2, XCircle, Boxes } from 'lucide-react';
+import { LayoutDashboard, Truck, Package, BarChart3, CheckCircle2, XCircle, Boxes, ScanLine } from 'lucide-react';
 import Dashboard from './pages/Dashboard.jsx';
 import Vehicles from './pages/Vehicles.jsx';
 import Packages from './pages/Packages.jsx';
 import Stats from './pages/Stats.jsx';
+import Handheld from './handheld/Handheld.jsx';
+import { queueStore } from './handheld/scanQueue.js';
+import { useQueue } from './handheld/useQueue.js';
 
 const ToastCtx = createContext(() => {});
 export const useToast = () => useContext(ToastCtx);
@@ -12,14 +15,25 @@ const PAGES = [
   { key: 'dashboard', label: '监控总览', icon: LayoutDashboard },
   { key: 'vehicles', label: '车辆班次', icon: Truck },
   { key: 'packages', label: '包裹与拦截', icon: Package },
+  { key: 'handheld', label: '手持扫描台', icon: ScanLine },
   { key: 'stats', label: '积压统计', icon: BarChart3 },
 ];
+
+function HandheldBadge() {
+  const snap = useQueue();
+  const n = snap.scans.filter(
+    (s) => s.state === 'pending' || s.state === 'error' || (s.state === 'conflict' && !s.resolution)
+  ).length;
+  return n > 0 ? <span className="nav-badge nav-badge-amber">{n}</span> : null;
+}
 
 export default function App() {
   const [page, setPage] = useState('dashboard');
   const [toasts, setToasts] = useState([]);
   const [alertCount, setAlertCount] = useState(0);
   const idRef = useRef(0);
+
+  React.useEffect(() => { queueStore.init(); }, []);
 
   const toast = useCallback((msg, type = 'info') => {
     const id = ++idRef.current;
@@ -46,6 +60,7 @@ export default function App() {
                 {key === 'dashboard' && alertCount > 0 && (
                   <span className="nav-badge">{alertCount}</span>
                 )}
+                {key === 'handheld' && <HandheldBadge />}
               </button>
             ))}
           </nav>
@@ -60,6 +75,7 @@ export default function App() {
           {page === 'dashboard' && <Dashboard onAlertCount={setAlertCount} goVehicles={() => setPage('vehicles')} />}
           {page === 'vehicles' && <Vehicles />}
           {page === 'packages' && <Packages />}
+          {page === 'handheld' && <Handheld />}
           {page === 'stats' && <Stats />}
         </main>
       </div>

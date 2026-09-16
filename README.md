@@ -51,6 +51,16 @@ cd client && npm install && npm run dev      # http://localhost:5173
 - 拦截后**禁止装车**（后端强制校验），处理完成后可解除拦截
 - 异常类型分布统计与最近拦截记录
 
+### 6. 手持扫描工作台（断网可作业）
+- **断网照常扫描**：到件 / 分拣 / 装车三类扫描在断网期间保存在手持机本地（IndexedDB），刷新页面、关闭浏览器均不丢失
+- **按批次作业**：每个作业类型自动延续当前批次，可手动开新批次、切回未完成批次继续；批次存在未补传或未处理完的扫描时不能关闭
+- **逐条补传与结果**：网络恢复后自动（或手动）补传，每条扫描独立返回「已记账 / 冲突暂停 / 失败」，未确认的扫描绝不计为成功作业
+- **幂等不重复记账**：每条扫描带设备生成的唯一 `scan_id`、设备号、扫描实际发生时间；服务端以台账去重，刷新或重复补传只回放首次结果，成功的扫描按**实际扫描时间**（非补传时间）记账
+- **冲突人工处理**：离线期间若包裹已被拦截、班次已发车、状态已被推进或装车班次不一致，冲突项暂停并展示服务器当前状态，提供「放弃（以服务器为准）/ 暂留 / 调整后重扫」选择，**不会覆盖服务器新状态**
+- **服务器扫描台账**：所有补传结果按设备、运单号可追溯（`scan_ledger` 表），含扫描时间、记账时间、冲突原因与处理结论
+
+> 设备号首次打开手持台时自动生成并长期保存在本机，可在页面顶部修改设备名称。
+
 ## 切换真实 PostgreSQL
 
 ```bash
@@ -79,6 +89,9 @@ cd server && npm run seed -- --force
 | GET/POST | `/api/packages` | 包裹查询 / 到件登记 |
 | POST | `/api/packages/:id/sort` `/load` | 分拣 / 装车 |
 | POST | `/api/packages/:id/intercept` `/release` | 拦截 / 解除拦截 |
+| POST | `/api/scan/sync` | 手持扫描批量补传（幂等：scan_id 去重，逐条返回记账/冲突结果；可附带冲突处理结论） |
+| GET | `/api/scan/ledger` | 扫描补传台账（设备 / 状态 / 运单号筛选） |
+| POST | `/api/scan/devices/heartbeat` | 手持设备报到 |
 | GET | `/api/stats/backlog` `/api/stats/abnormal` | 积压 / 异常统计 |
 
 ## 目录结构
@@ -92,9 +105,10 @@ express-hub/
 │       ├── schema.sql      # 表结构
 │       ├── seed.js         # 模拟数据
 │       ├── helpers.js      # 超时预警计算、状态机
-│       └── routes/         # vehicles / packages / stats
+│       └── routes/         # vehicles / packages / scan(手持补传) / stats
 └── client/                 # React 前端
     └── src/
         ├── pages/          # 总览 / 车辆 / 包裹 / 统计
+        ├── handheld/       # 手持扫描工作台（离线队列、补传引擎、冲突处理、台账）
         └── components/     # 通用组件
 ```

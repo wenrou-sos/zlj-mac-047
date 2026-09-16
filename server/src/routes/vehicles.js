@@ -74,7 +74,8 @@ router.post('/:id/action/:action', async (req, res) => {
   // 发车：已分拣包裹自动装车；拦截件留在场地，不随车发走
   if (action === 'depart') {
     await query(
-      `UPDATE packages SET status = 'loaded' WHERE vehicle_id = $1 AND status = 'sorted'`,
+      `UPDATE packages SET status = 'loaded', loaded_at = NOW()
+       WHERE vehicle_id = $1 AND status = 'sorted'`,
       [id]
     );
   }
