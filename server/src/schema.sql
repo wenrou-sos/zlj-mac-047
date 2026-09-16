@@ -148,6 +148,66 @@ CREATE TABLE IF NOT EXISTS settings (
   value NUMERIC NOT NULL
 );
 
+-- ─────────────────────────────────────────────────────────────
+-- 旧库数据补齐（幂等）：升级前的车辆没有预约/占用记录，
+-- 不补齐会导致卸车中的历史车辆无法走「完成卸车→释放泊位」流程
+-- ─────────────────────────────────────────────────────────────
+DO $$
+BEGIN
+  -- 已到场/卸车中但没有进行中预约的车辆：补一条候叫预约
+  INSERT INTO appointments
+    (vehicle_id, vehicle_type, slot_start, slot_end, status, source,
+     checked_at, queued_at, queue_seq, is_late)
+  SELECT v.id, v.vehicle_type,
+         COALESCE(v.arrived_at, NOW()), COALESCE(v.arrived_at, NOW()) + INTERVAL '30 min',
+         'checked', 'walkin',
+         COALESCE(v.arrived_at, NOW()), COALESCE(v.arrived_at, NOW()),
+         nextval('appointment_queue_seq'), TRUE
+  FROM vehicles v
+  WHERE v.status IN ('arrived','unloading')
+    AND NOT EXISTS (
+      SELECT 1 FROM appointments a
+       WHERE a.vehicle_id = v.id
+         AND a.status IN ('booked','checked','called','unloading')
+    );
+
+  -- 卸车中但没有未释放占用的车辆：在适配月台上补一条 in_use 占用
+  -- （选择当前没有未释放占用的月台；找不到则跳过，释放接口对旧库有兼容兜底）
+  INSERT INTO dock_assignments
+    (dock_id, vehicle_id, appointment_id, status, assigned_at, unload_start_at)
+  SELECT d.id, v.id, a.id, 'in_use',
+         COALESCE(v.unload_start_at, NOW()),
+         COALESCE(v.unload_start_at, NOW())
+  FROM vehicles v
+  JOIN appointments a ON a.vehicle_id = v.id AND a.status = 'checked'
+  JOIN LATERAL (
+    SELECT dk.id FROM docks dk
+     WHERE dk.status = 'active'
+       AND v.vehicle_type = ANY(dk.allowed_types)
+       AND NOT EXISTS (SELECT 1 FROM dock_assignments x WHERE x.dock_id = dk.id AND x.released_at IS NULL)
+     ORDER BY dk.id LIMIT 1
+  ) d ON TRUE
+  WHERE v.status = 'unloading'
+    AND NOT EXISTS (SELECT 1 FROM dock_assignments x WHERE x.vehicle_id = v.id AND x.released_at IS NULL);
+
+  -- 上面补了占用的车辆，预约状态对齐为 unloading
+  UPDATE appointments a
+     SET status = 'unloading', called_at = COALESCE(called_at, NOW()), updated_at = NOW()
+   FROM dock_assignments x, vehicles v
+  WHERE x.appointment_id = a.id AND x.vehicle_id = v.id
+    AND x.released_at IS NULL AND v.status = 'unloading' AND a.status = 'checked';
+
+  -- 待到车但没有预约的车辆：补一条 booked 预约，不产生任何泊位占用
+  INSERT INTO appointments (vehicle_id, vehicle_type, slot_start, slot_end, status)
+  SELECT v.id, v.vehicle_type,
+         COALESCE(v.planned_arrival, NOW()),
+         COALESCE(v.planned_arrival, NOW()) + INTERVAL '30 min',
+         'booked'
+  FROM vehicles v
+  WHERE v.status = 'expected'
+    AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.vehicle_id = v.id);
+END $$;
+
 INSERT INTO settings (key, value) VALUES
   ('unload_timeout_min', 30),   -- 到车后 N 分钟内应完成卸车
   ('sort_timeout_min',   60),   -- 卸车完成后 N 分钟内应完成分拣

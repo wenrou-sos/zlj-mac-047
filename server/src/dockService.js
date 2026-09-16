@@ -3,7 +3,7 @@
 //   1. 预约（booked）只是计划，不占用月台；叫号成功才产生 dock_assignments 实际占用
 //   2. 同一月台同时只能有一条未释放占用 —— 由数据库部分唯一索引 + 单条原子 SQL 双重保证
 //   3. 泊位只在卸车结束时释放；叫号后未靠台的召回是唯一例外，且必须填写原因
-import { query } from './db.js';
+import { query, withTransaction } from './db.js';
 
 export const VEHICLE_TYPES = ['small', 'medium', 'large', 'extra_large'];
 
@@ -209,60 +209,84 @@ export async function cancelAppointment(apptId, reason) {
 // 召回：已叫号但尚未开始卸车，带原因收回泊位，车辆重新排队尾
 export async function recallAppointment(apptId, reason) {
   if (!reason || !String(reason).trim()) throw new ApiError(400, '召回必须填写原因');
-  const released = await query(
-    `UPDATE dock_assignments
-       SET status='cancelled', released_at=NOW(), cancel_reason=$2
-     WHERE appointment_id=$1 AND released_at IS NULL AND status='assigned'
-     RETURNING id`,
-    [apptId, String(reason).trim()]
-  );
-  if (!released.length) {
-    throw new ApiError(409, '车辆已开始卸车，泊位只能在卸车结束后释放，不能召回');
-  }
-  const [seqRow] = await query(`SELECT nextval('appointment_queue_seq')::bigint AS seq`);
-  const rows = await query(
-    `UPDATE appointments
-       SET status='checked', called_at=NULL, queued_at=NOW(), queue_seq=$2,
-           priority=100, priority_reason=NULL, requeued=TRUE,
-           recall_reason=$3, updated_at=NOW()
-     WHERE id=$1 AND status='called' RETURNING *`,
-    [apptId, seqRow.seq, String(reason).trim()]
-  );
-  return rows[0];
+  const rsn = String(reason).trim();
+  return withTransaction(async (q) => {
+    // 行锁与「开始卸车」事务串行：若对方已先提交（in_use），本更新 0 行 → 干净返回 409
+    const released = await q(
+      `UPDATE dock_assignments
+         SET status='cancelled', released_at=NOW(), cancel_reason=$2
+       WHERE appointment_id=$1 AND released_at IS NULL AND status='assigned'
+       RETURNING id`,
+      [apptId, rsn]
+    );
+    if (!released.length) {
+      throw new ApiError(409, '车辆已开始卸车，泊位只能在卸车结束后释放，不能召回');
+    }
+    const [seqRow] = await q(`SELECT nextval('appointment_queue_seq')::bigint AS seq`);
+    const rows = await q(
+      `UPDATE appointments
+         SET status='checked', called_at=NULL, queued_at=NOW(), queue_seq=$2,
+             priority=100, priority_reason=NULL, requeued=TRUE,
+             recall_reason=$3, updated_at=NOW()
+       WHERE id=$1 AND status='called' RETURNING *`,
+      [apptId, seqRow.seq, rsn]
+    );
+    if (!rows.length) throw new ApiError(409, '车辆当前状态不能召回');
+    return rows[0];
+  });
 }
 
-// 开始卸车：占用进入 in_use
+// 开始卸车：占用进入 in_use。
+// 与「召回」并发时，必须先对占用行加 FOR UPDATE 锁再判断状态：
+// 若泊位已被召回释放，不能把 cancelled 占用复活成 in_use（否则会出现"车在卸车、泊位却空"的脏数据）
 export async function markUnloadStarted(vehicleId) {
-  const [asgn] = await query(
-    `SELECT * FROM dock_assignments WHERE vehicle_id=$1 AND released_at IS NULL`,
-    [vehicleId]
-  );
-  if (!asgn) throw new ApiError(409, '车辆尚未叫号靠台，不能开始卸车');
-  await query(
-    `UPDATE dock_assignments SET status='in_use', unload_start_at=COALESCE(unload_start_at, NOW())
-     WHERE id=$1`,
-    [asgn.id]
-  );
-  await query(
-    `UPDATE appointments SET status='unloading', updated_at=NOW()
-     WHERE id=$1 AND status IN ('called','unloading')`,
-    [asgn.appointment_id]
-  );
-  return asgn;
+  return withTransaction(async (q) => {
+    const asgn = await q(
+      `SELECT * FROM dock_assignments WHERE vehicle_id=$1 AND released_at IS NULL FOR UPDATE`,
+      [vehicleId]
+    );
+    if (!asgn.length) throw new ApiError(409, '车辆尚未叫号靠台，不能开始卸车');
+    if (asgn[0].status !== 'assigned') {
+      // in_use：重复点击，幂等放行；cancelled 只会在 released_at 已置时间后出现，正常不会走到
+      if (asgn[0].status === 'in_use') return asgn[0];
+      throw new ApiError(409, '泊位已被召回释放，请重新叫号后再卸车');
+    }
+    const [appt] = await q(`SELECT id, status FROM appointments WHERE id=$1 FOR UPDATE`, [asgn[0].appointment_id]);
+    if (!appt || !['called', 'unloading'].includes(appt.status)) {
+      throw new ApiError(409, '车辆已被召回重排，不能开始卸车，请重新叫号');
+    }
+    await q(
+      `UPDATE dock_assignments SET status='in_use', unload_start_at=COALESCE(unload_start_at, NOW())
+       WHERE id=$1 AND status='assigned'`,
+      [asgn[0].id]
+    );
+    await q(`UPDATE appointments SET status='unloading', updated_at=NOW() WHERE id=$1`, [asgn[0].appointment_id]);
+    return asgn[0];
+  });
 }
 
-// 卸车结束：这是泊位正常释放的唯一时机
+// 卸车结束：泊位正常释放的唯一时机。
+// 兼容旧库：历史卸车中车辆可能没有占用记录（升级前数据），此时不再抛错——
+// 车辆状态仍可推进，但会把结果标记为 legacy，便于日志与后续补录
 export async function releaseByUnloadEnd(vehicleId) {
   const released = await query(
     `UPDATE dock_assignments SET status='released', released_at=NOW()
-     WHERE vehicle_id=$1 AND released_at IS NULL
+     WHERE vehicle_id=$1 AND released_at IS NULL AND status IN ('assigned','in_use')
      RETURNING appointment_id`,
     [vehicleId]
   );
-  if (!released.length) throw new ApiError(409, '车辆没有进行中的月台占用，无法完成卸车');
+  if (!released.length) {
+    const [v] = await query(`SELECT id FROM vehicles WHERE id=$1 AND status='unloading'`, [vehicleId]);
+    if (v) {
+      console.warn(`[dock] vehicle ${vehicleId} 无有效泊位占用（旧库遗留数据），仅推进车辆状态`);
+      return { legacy: true, appointment_id: null };
+    }
+    throw new ApiError(409, '车辆没有进行中的月台占用，无法完成卸车');
+  }
   await query(
     `UPDATE appointments SET status='completed', updated_at=NOW()
      WHERE id=$1 AND status IN ('called','unloading')`,
     [released[0].appointment_id]
   );
+  return { legacy: false, appointment_id: released[0].appointment_id };
 }

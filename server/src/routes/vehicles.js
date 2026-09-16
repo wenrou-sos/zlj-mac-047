@@ -120,18 +120,19 @@ router.post('/:id/action/:action', async (req, res) => {
     }
     if (action === 'unload-start') {
       // 没有叫号靠台不允许开始卸车（不能直接占用一个看不见的月台）
+      // markUnloadStarted 内部对占用行加锁，与「召回」并发时必然只有一方成功
       await markUnloadStarted(Number(id));
+    }
+    if (action === 'unload-end') {
+      // 先释放泊位，成功后再推进车辆状态：
+      // 否则释放抛错时车辆已变成待分拣，泊位却仍被占用、无法补操作
+      await releaseByUnloadEnd(Number(id));
     }
 
     const rows = await query(
       `UPDATE vehicles SET status = $1, ${flow.set} = NOW() WHERE id = $2 RETURNING *`,
       [flow.to, id]
     );
-
-    if (action === 'unload-end') {
-      // 卸车结束才释放泊位
-      await releaseByUnloadEnd(Number(id));
-    }
 
     // 完成分拣：车上所有待分拣包裹自动标记为已分拣（拦截件除外）
     if (action === 'sort-end') {

@@ -25,6 +25,21 @@ if (process.env.DATABASE_URL) {
     async exec(text) {
       await pool.query(text);
     },
+    async withTransaction(fn) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const tq = (text, params = []) => client.query(text, params).then((r) => r.rows);
+        const result = await fn(tq);
+        await client.query('COMMIT');
+        return result;
+      } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
+    },
   };
   console.log('[db] 使用 PostgreSQL 服务器:', process.env.DATABASE_URL.replace(/\/\/.*@/, '//***@'));
 } else {
@@ -40,10 +55,17 @@ if (process.env.DATABASE_URL) {
     async exec(text) {
       await pglite.exec(text);
     },
+    async withTransaction(fn) {
+      return pglite.transaction(async (tx) => {
+        const tq = (text, params = []) => tx.query(text, params).then((r) => r.rows);
+        return fn(tq);
+      });
+    },
   };
   console.log('[db] 使用嵌入式 PGlite，数据目录:', DATA_DIR);
 }
 
 export const query = (text, params) => db.query(text, params);
 export const exec = (text) => db.exec(text);
+export const withTransaction = (fn) => db.withTransaction(fn);
 export default db;
