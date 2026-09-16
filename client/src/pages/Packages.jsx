@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Plus, RefreshCw, Search, Ban, Undo2, PackageCheck, Forklift, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, RefreshCw, Search, Ban, ClipboardList, PackageCheck, Forklift, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../api.js';
-import { useToast } from '../App.jsx';
+import { useToast, useOperator } from '../App.jsx';
 import { Badge, Modal, Empty } from '../components/common.jsx';
 import { PACKAGE_STATUS, ABNORMAL_TYPES, fmtDateTime } from '../utils.js';
 
 const PAGE_SIZE = 50;
 
-export default function Packages() {
+export default function Packages({ goWorkOrders }) {
   const [data, setData] = useState({ items: [], total: 0 });
   const [page, setPage] = useState(1);
   const [filters, setFilters] = useState({ status: '', abnormal: '', q: '' });
@@ -16,6 +16,7 @@ export default function Packages() {
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ tracking_no: '', destination: '', weight_kg: '' });
   const toast = useToast();
+  const { operator, setOperator } = useOperator();
 
   const load = useCallback(async () => {
     try {
@@ -42,9 +43,13 @@ export default function Packages() {
   };
 
   const intercept = async () => {
+    if (!operator) {
+      toast('请先填写操作人', 'error');
+      return;
+    }
     await run(
-      () => api.interceptPackage(interceptTarget.id, interceptForm),
-      `运单 ${interceptTarget.tracking_no} 已拦截`
+      () => api.interceptPackage(interceptTarget.id, { ...interceptForm, operator }),
+      `运单 ${interceptTarget.tracking_no} 已拦截，处置工单已生成`
     );
     setInterceptTarget(null);
     setInterceptForm({ abnormal_type: 'damaged', note: '' });
@@ -75,7 +80,7 @@ export default function Packages() {
       <div className="page-header">
         <div>
           <h1>包裹与异常拦截</h1>
-          <div className="sub">到件扫描、分拣装车、异常件拦截与解除</div>
+          <div className="sub">到件扫描、分拣装车；拦截后生成处置工单，在「异常工单」页办理</div>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button className="btn" onClick={() => load()}><RefreshCw size={14} /> 刷新</button>
@@ -142,7 +147,14 @@ export default function Packages() {
                           {ABNORMAL_TYPES[p.abnormal_type] || p.abnormal_type}
                         </span>
                         {p.abnormal_note && <div className="text-muted">{p.abnormal_note}</div>}
+                        {p.open_work_orders > 0 && (
+                          <div style={{ color: 'var(--amber)', fontSize: 12, fontWeight: 600 }}>
+                            未结工单 {p.open_work_orders} 张
+                          </div>
+                        )}
                       </div>
+                    ) : p.status === 'returned' ? (
+                      <div className="text-muted">退回：{p.return_destination || '—'}</div>
                     ) : <span className="text-muted">—</span>}
                   </td>
                   <td className="mono text-muted">{fmtDateTime(p.created_at)}</td>
@@ -169,11 +181,17 @@ export default function Packages() {
                         </>
                       )}
                       {p.status === 'intercepted' && (
-                        <button className="btn btn-sm" onClick={() => run(() => api.releasePackage(p.id), '已解除拦截')}>
-                          <Undo2 size={13} /> 解除拦截
-                        </button>
+                        <>
+                          <button className="btn btn-next btn-sm" onClick={goWorkOrders}>
+                            <ClipboardList size={13} /> 处置工单
+                          </button>
+                          <button className="btn btn-danger btn-sm" onClick={() => { setInterceptTarget(p); setInterceptForm({ abnormal_type: 'damaged', note: '' }); }}>
+                            <Ban size={13} /> 再次登记
+                          </button>
+                        </>
                       )}
                       {p.status === 'loaded' && <span className="text-muted">已装车发运</span>}
+                      {p.status === 'returned' && <span className="text-muted">已退回，不计入待发库存</span>}
                     </div>
                   </td>
                 </tr>
@@ -219,12 +237,21 @@ export default function Packages() {
             </select>
           </div>
           <div className="form-row">
+            <label>操作人 *</label>
+            <input className="input" placeholder="登记人姓名" value={operator} onChange={(e) => setOperator(e.target.value.trim())} />
+          </div>
+          <div className="form-row">
             <label>备注说明</label>
             <input className="input" placeholder="异常情况描述（选填）" value={interceptForm.note} onChange={(e) => setInterceptForm({ ...interceptForm, note: e.target.value })} />
           </div>
           <div className="alert-item warn" style={{ marginBottom: 0 }}>
             <span className="alert-icon"><Ban size={16} /></span>
-            <div className="alert-msg">拦截后该件将<b>禁止装车发运</b>，需在处理完成后手动解除拦截。</div>
+            <div className="alert-msg">
+              拦截后将<b>生成独立处置工单</b>并禁止装车，需经「认领 → 处理 → 提交结论 → 复核」结案后方可恢复。
+              {interceptTarget.status === 'intercepted' && (
+                <div style={{ marginTop: 4 }}>该件已有拦截记录，本次将<b>另建新工单</b>，与历史工单分别留档。</div>
+              )}
+            </div>
           </div>
         </Modal>
       )}

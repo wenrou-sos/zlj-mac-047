@@ -1,15 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import { Truck, Package, PackageCheck, Ban, AlertTriangle, AlertOctagon, RefreshCw, ArrowRight, Clock } from 'lucide-react';
+import { Truck, Package, PackageCheck, Ban, AlertTriangle, AlertOctagon, RefreshCw, ArrowRight, Clock, ClipboardList } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
 import { StatCard, Empty } from '../components/common.jsx';
 import { fmtAgo } from '../utils.js';
 
-const PIE_COLORS = { pending: '#f59e0b', sorted: '#8b5cf6', loaded: '#22c55e', intercepted: '#ef4444' };
-const PIE_LABEL = { pending: '待分拣', sorted: '已分拣', loaded: '已装车', intercepted: '已拦截' };
+const PIE_COLORS = { pending: '#f59e0b', sorted: '#8b5cf6', loaded: '#22c55e', intercepted: '#ef4444', returned: '#94a3b8' };
+const PIE_LABEL = { pending: '待分拣', sorted: '已分拣', loaded: '已装车', intercepted: '已拦截', returned: '已退回' };
 
-export default function Dashboard({ onAlertCount, goVehicles }) {
+export default function Dashboard({ goVehicles }) {
   const [overview, setOverview] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [updatedAt, setUpdatedAt] = useState(null);
@@ -20,7 +20,6 @@ export default function Dashboard({ onAlertCount, goVehicles }) {
       const [ov, al] = await Promise.all([api.overview(), api.alerts()]);
       setOverview(ov);
       setAlerts(al);
-      onAlertCount(al.length);
       setUpdatedAt(new Date());
     } catch (e) {
       toast(e.message, 'error');
@@ -36,7 +35,7 @@ export default function Dashboard({ onAlertCount, goVehicles }) {
   if (!overview) return <div className="empty">加载中…</div>;
 
   const pkg = overview.packages;
-  const pieData = ['pending', 'sorted', 'loaded', 'intercepted']
+  const pieData = ['pending', 'sorted', 'loaded', 'intercepted', 'returned']
     .map((k) => ({ key: k, name: PIE_LABEL[k], value: pkg[k] }))
     .filter((d) => d.value > 0);
 
@@ -58,6 +57,7 @@ export default function Dashboard({ onAlertCount, goVehicles }) {
         <StatCard icon={<Package size={22} />} label="待分拣包裹" value={pkg.pending} iconBg="#fef3c7" iconColor="#b45309" />
         <StatCard icon={<PackageCheck size={22} />} label="已装车包裹" value={pkg.loaded} iconBg="#dcfce7" iconColor="#15803d" />
         <StatCard icon={<Ban size={22} />} label="拦截异常件" value={pkg.intercepted} iconBg="#fee2e2" iconColor="#b91c1c" />
+        <StatCard icon={<ClipboardList size={22} />} label="未结处置工单" value={overview.work_orders.open} iconBg="#ede9fe" iconColor="#7c3aed" />
         <StatCard
           icon={<AlertTriangle size={22} />}
           label="超时预警"

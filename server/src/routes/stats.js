@@ -21,8 +21,16 @@ router.get('/overview', async (req, res) => {
        COUNT(*) FILTER (WHERE status = 'pending')::int      AS pending,
        COUNT(*) FILTER (WHERE status = 'sorted')::int       AS sorted,
        COUNT(*) FILTER (WHERE status = 'loaded')::int       AS loaded,
-       COUNT(*) FILTER (WHERE status = 'intercepted')::int  AS intercepted
+       COUNT(*) FILTER (WHERE status = 'intercepted')::int  AS intercepted,
+       COUNT(*) FILTER (WHERE status = 'returned')::int     AS returned
      FROM packages`
+  );
+  const [woStats] = await query(
+    `SELECT
+       COUNT(*) FILTER (WHERE status IN ('open','processing','pending_review'))::int AS open,
+       COUNT(*) FILTER (WHERE status = 'open')::int           AS unclaimed,
+       COUNT(*) FILTER (WHERE status = 'pending_review')::int AS pending_review
+     FROM work_orders`
   );
   const vehicles = await query(`SELECT * FROM vehicles WHERE status NOT IN ('departed','expected')`);
   const alerts = computeAlerts(vehicles, await getSettings());
@@ -30,6 +38,7 @@ router.get('/overview', async (req, res) => {
   res.json({
     vehicles: vehicleStats,
     packages: pkgStats,
+    work_orders: woStats,
     alert_count: alerts.length,
     overdue_count: alerts.filter((a) => a.level === 'overdue').length,
   });
@@ -81,29 +90,35 @@ router.get('/stats/backlog', async (req, res) => {
   res.json({ byStatus, byDestination, byVehicle, trend });
 });
 
-// 异常件统计
-// 台账口径：intercepted_at IS NOT NULL 表示"曾被拦截过的异常件"（含已解除），
-// 不能用 is_abnormal（解除拦截时会置 FALSE，导致已处理记录从台账消失、与累计数对不上）
+// 异常件统计（工单口径：每次拦截一张工单，同一包裹多次异常分别计入）
 router.get('/stats/abnormal', async (req, res) => {
   const byType = await query(
     `SELECT abnormal_type, COUNT(*)::int AS count
-     FROM packages WHERE intercepted_at IS NOT NULL
-     GROUP BY abnormal_type ORDER BY count DESC`
+     FROM work_orders GROUP BY abnormal_type ORDER BY count DESC`
+  );
+  const byConclusion = await query(
+    `SELECT conclusion, COUNT(*)::int AS count
+     FROM work_orders WHERE status = 'closed' AND conclusion IS NOT NULL
+     GROUP BY conclusion`
   );
   const recent = await query(
-    `SELECT p.*, v.plate_no, v.route_code
-     FROM packages p LEFT JOIN vehicles v ON v.id = p.vehicle_id
-     WHERE p.intercepted_at IS NOT NULL
-     ORDER BY p.intercepted_at DESC LIMIT 20`
+    `SELECT w.*, p.tracking_no, p.destination, p.status AS package_status, v.plate_no
+     FROM work_orders w
+     JOIN packages p ON p.id = w.package_id
+     LEFT JOIN vehicles v ON v.id = p.vehicle_id
+     ORDER BY w.created_at DESC LIMIT 20`
   );
   const [summary] = await query(
     `SELECT
-       COUNT(*) FILTER (WHERE intercepted_at IS NOT NULL)::int         AS total_abnormal,
-       COUNT(*) FILTER (WHERE status = 'intercepted')::int            AS intercepted,
-       COUNT(*) FILTER (WHERE intercept_released_at IS NOT NULL)::int AS released
-     FROM packages`
+       COUNT(*)::int                                              AS total,
+       COUNT(*) FILTER (WHERE status = 'open')::int              AS unclaimed,
+       COUNT(*) FILTER (WHERE status = 'processing')::int        AS processing,
+       COUNT(*) FILTER (WHERE status = 'pending_review')::int    AS pending_review,
+       COUNT(*) FILTER (WHERE status = 'closed')::int            AS closed,
+       COALESCE(SUM(reject_count), 0)::int                       AS reject_total
+     FROM work_orders`
   );
-  res.json({ byType, recent, summary });
+  res.json({ byType, byConclusion, recent, summary });
 });
 
 // 超时规则配置

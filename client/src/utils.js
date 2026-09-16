@@ -14,6 +14,7 @@ export const PACKAGE_STATUS = {
   sorted:      { label: '已分拣', color: '#7c3aed', bg: '#ede9fe' },
   loaded:      { label: '已装车', color: '#15803d', bg: '#dcfce7' },
   intercepted: { label: '已拦截', color: '#b91c1c', bg: '#fee2e2' },
+  returned:    { label: '已退回', color: '#475569', bg: '#e2e8f0' },
 };
 
 export const ABNORMAL_TYPES = {
@@ -22,6 +23,24 @@ export const ABNORMAL_TYPES = {
   overweight: '超重超限',
   prohibited: '疑似违禁品',
   address_issue: '地址信息异常',
+};
+
+export const WORK_ORDER_STATUS = {
+  open:           { label: '待认领', color: '#b45309', bg: '#fef3c7' },
+  processing:     { label: '处理中', color: '#1d4ed8', bg: '#dbeafe' },
+  pending_review: { label: '待复核', color: '#7c3aed', bg: '#ede9fe' },
+  closed:         { label: '已结案', color: '#15803d', bg: '#dcfce7' },
+};
+
+export const CONCLUSIONS = {
+  repair_release: { label: '修复放行', color: '#15803d', bg: '#dcfce7' },
+  return:         { label: '退回',     color: '#b45309', bg: '#fef3c7' },
+  isolate:        { label: '继续隔离', color: '#475569', bg: '#e2e8f0' },
+};
+
+export const WO_ACTIONS = {
+  create: '创建工单', claim: '认领', transfer: '转交', evidence: '补充证据',
+  submit: '提交结论', reject: '复核驳回', approve: '复核通过', auto_close: '自动结案',
 };
 
 export const fmtTime = (t) => {

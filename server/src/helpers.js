@@ -93,10 +93,28 @@ export const VEHICLE_STATUS_LABEL = {
 };
 
 export const PACKAGE_STATUS_LABEL = {
-  pending: '待分拣', sorted: '已分拣', loaded: '已装车', intercepted: '已拦截',
+  pending: '待分拣', sorted: '已分拣', loaded: '已装车',
+  intercepted: '已拦截', returned: '已退回',
 };
 
 export const ABNORMAL_TYPE_LABEL = {
   damaged: '外包装破损', wrong_route: '错分线路', overweight: '超重超限',
   prohibited: '疑似违禁品', address_issue: '地址信息异常',
 };
+
+// 工单状态 / 结论 / 流转动作
+export const WORK_ORDER_STATUS_LABEL = {
+  open: '待认领', processing: '处理中', pending_review: '待复核', closed: '已结案',
+};
+
+export const CONCLUSION_LABEL = {
+  repair_release: '修复放行', return: '退回', isolate: '继续隔离',
+};
+
+export const WO_ACTION_LABEL = {
+  create: '创建工单', claim: '认领', transfer: '转交', evidence: '补充证据',
+  submit: '提交结论', reject: '复核驳回', approve: '复核通过', auto_close: '自动结案',
+};
+
+// 未结工单状态（存在即禁止包裹恢复装车）
+export const OPEN_WO_STATUSES = ['open', 'processing', 'pending_review'];

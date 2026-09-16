@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { RefreshCw, Save, Ban } from 'lucide-react';
+import { RefreshCw, Save, ClipboardList } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   AreaChart, Area, CartesianGrid, Legend, Cell,
@@ -7,7 +7,7 @@ import {
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
 import { Badge, Empty } from '../components/common.jsx';
-import { VEHICLE_STATUS, ABNORMAL_TYPES, fmtDateTime } from '../utils.js';
+import { VEHICLE_STATUS, ABNORMAL_TYPES, WORK_ORDER_STATUS, CONCLUSIONS, fmtDateTime } from '../utils.js';
 
 const ABNORMAL_COLORS = ['#ef4444', '#f97316', '#eab308', '#8b5cf6', '#06b6d4'];
 
@@ -99,22 +99,23 @@ export default function Stats() {
           </div>
         </div>
 
-        {/* 异常件统计 */}
+        {/* 异常工单统计 */}
         <div className="card">
           <div className="card-header">
-            <h3><Ban size={15} color="#dc2626" /> 异常件统计</h3>
+            <h3><ClipboardList size={15} color="#7c3aed" /> 异常工单统计</h3>
             <span className="text-muted">
-              累计 {abnormal.summary.total_abnormal} · 拦截中 {abnormal.summary.intercepted} · 已解除 {abnormal.summary.released}
+              累计 {abnormal.summary.total} · 待认领 {abnormal.summary.unclaimed} · 处理中 {abnormal.summary.processing}
+              · 待复核 {abnormal.summary.pending_review} · 已结案 {abnormal.summary.closed}
             </span>
           </div>
           <div className="card-body" style={{ height: 260 }}>
-            {abnormal.byType.length === 0 ? <Empty text="暂无异常件" /> : (
+            {abnormal.byType.length === 0 ? <Empty text="暂无异常工单" /> : (
               <ResponsiveContainer>
                 <BarChart data={abnormal.byType.map((t) => ({ ...t, name: ABNORMAL_TYPES[t.abnormal_type] || t.abnormal_type }))}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis dataKey="name" fontSize={11} tick={{ fill: '#475569' }} />
                   <YAxis fontSize={11} tick={{ fill: '#94a3b8' }} />
-                  <Tooltip formatter={(v) => [`${v} 件`, '数量']} />
+                  <Tooltip formatter={(v) => [`${v} 张`, '工单数']} />
                   <Bar dataKey="count" radius={[4, 4, 0, 0]} barSize={36}>
                     {abnormal.byType.map((_, i) => <Cell key={i} fill={ABNORMAL_COLORS[i % ABNORMAL_COLORS.length]} />)}
                   </Bar>
@@ -122,6 +123,16 @@ export default function Stats() {
               </ResponsiveContainer>
             )}
           </div>
+          {abnormal.byConclusion.length > 0 && (
+            <div className="card-header" style={{ borderTop: '1px solid var(--border)', borderBottom: 'none', gap: 8, justifyContent: 'flex-start' }}>
+              <span className="text-muted">结案结论分布：</span>
+              {abnormal.byConclusion.map((c) => (
+                <Badge key={c.conclusion} conf={CONCLUSIONS[c.conclusion]}>
+                  {CONCLUSIONS[c.conclusion]?.label || c.conclusion} {c.count}
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -181,33 +192,36 @@ export default function Stats() {
         </div>
       </div>
 
-      {/* 最近异常件 */}
+      {/* 最近异常工单 */}
       <div className="card">
-        <div className="card-header"><h3>最近异常件记录</h3></div>
+        <div className="card-header"><h3>最近异常工单</h3></div>
         <div className="table-wrap">
           <table className="tbl">
             <thead>
-              <tr><th>运单号</th><th>目的地</th><th>所属车辆</th><th>异常类型</th><th>备注</th><th>拦截时间</th><th>当前状态</th></tr>
+              <tr><th>工单号</th><th>运单号</th><th>目的地</th><th>所属车辆</th><th>异常类型</th><th>状态</th><th>处理人</th><th>处理结论</th><th>创建时间</th></tr>
             </thead>
             <tbody>
-              {abnormal.recent.map((p) => (
-                <tr key={p.id}>
-                  <td className="mono">{p.tracking_no}</td>
-                  <td>{p.destination}</td>
-                  <td>{p.plate_no || <span className="text-muted">未分配</span>}</td>
-                  <td style={{ color: 'var(--red)', fontWeight: 600 }}>{ABNORMAL_TYPES[p.abnormal_type] || p.abnormal_type}</td>
-                  <td className="text-muted">{p.abnormal_note || '—'}</td>
-                  <td className="mono text-muted">{fmtDateTime(p.intercepted_at)}</td>
+              {abnormal.recent.map((w) => (
+                <tr key={w.id}>
+                  <td className="mono">#{w.id}</td>
+                  <td className="mono">{w.tracking_no}</td>
+                  <td>{w.destination}</td>
+                  <td>{w.plate_no || <span className="text-muted">未分配</span>}</td>
+                  <td style={{ color: 'var(--red)', fontWeight: 600 }}>{ABNORMAL_TYPES[w.abnormal_type] || w.abnormal_type}</td>
+                  <td><Badge conf={WORK_ORDER_STATUS[w.status]} /></td>
+                  <td>{w.assignee || <span className="text-muted">未认领</span>}</td>
                   <td>
-                    {p.status === 'intercepted'
-                      ? <span className="badge" style={{ color: '#b91c1c', background: '#fee2e2' }}><span className="dot" />拦截中</span>
-                      : <span className="badge" style={{ color: '#15803d', background: '#dcfce7' }}><span className="dot" />已解除</span>}
+                    {w.conclusion ? <Badge conf={CONCLUSIONS[w.conclusion]} /> : <span className="text-muted">—</span>}
+                    {w.conclusion === 'return' && w.return_destination && (
+                      <div className="text-muted">{w.return_destination}</div>
+                    )}
                   </td>
+                  <td className="mono text-muted">{fmtDateTime(w.created_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {abnormal.recent.length === 0 && <Empty text="暂无异常件记录" />}
+          {abnormal.recent.length === 0 && <Empty text="暂无异常工单记录" />}
         </div>
       </div>
     </div>

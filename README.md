@@ -46,10 +46,15 @@ cd client && npm install && npm run dev      # http://localhost:5173
 - 按目的地、按车辆的积压分布
 - 在场车辆积压明细表
 
-### 5. 异常件拦截
+### 5. 异常件处置工单
 - 五种异常类型：外包装破损 / 错分线路 / 超重超限 / 疑似违禁品 / 地址信息异常
-- 拦截后**禁止装车**（后端强制校验），处理完成后可解除拦截
-- 异常类型分布统计与最近拦截记录
+- **每次拦截生成一张独立处置工单**，同一包裹多次异常分别留档、互不影响
+- 工单流转：`待认领 → 处理中 → 待复核 → 已结案`，支持**认领、转交、补充证据、提交处理结论、复核**
+- 处理结论三选一：**修复放行 / 退回 / 继续隔离**；复核驳回后退回处理中继续处理
+- **提交人与复核人不能是同一人**（后端强制校验）
+- 包裹尚有未结工单时**禁止恢复装车**（装车与发车均强制校验）
+- 结论为「退回」的包裹进入**独立退回去向**，状态为已退回，不再计入正常待发库存
+- 全程流转记录留痕，工单页可查看同一包裹的历史异常工单
 
 ## 切换真实 PostgreSQL
 
@@ -77,9 +82,12 @@ cd server && npm run seed -- --force
 | GET/POST | `/api/vehicles` | 班次列表 / 到车预报 |
 | POST | `/api/vehicles/:id/action/:action` | 状态推进（arrive / unload-start / unload-end / sort-start / sort-end / depart） |
 | GET/POST | `/api/packages` | 包裹查询 / 到件登记 |
-| POST | `/api/packages/:id/sort` `/load` | 分拣 / 装车 |
-| POST | `/api/packages/:id/intercept` `/release` | 拦截 / 解除拦截 |
-| GET | `/api/stats/backlog` `/api/stats/abnormal` | 积压 / 异常统计 |
+| POST | `/api/packages/:id/sort` `/load` | 分拣 / 装车（有未结工单禁止装车） |
+| POST | `/api/packages/:id/intercept` | 拦截并生成处置工单 |
+| GET | `/api/work-orders` `/api/work-orders/:id` | 工单列表 / 详情（含流转留档） |
+| POST | `/api/work-orders/:id/claim` `/transfer` `/evidence` | 认领 / 转交 / 补充证据 |
+| POST | `/api/work-orders/:id/submit` `/review` | 提交处理结论 / 复核（通过或驳回） |
+| GET | `/api/stats/backlog` `/api/stats/abnormal` | 积压 / 异常工单统计 |
 
 ## 目录结构
 
@@ -92,9 +100,9 @@ express-hub/
 │       ├── schema.sql      # 表结构
 │       ├── seed.js         # 模拟数据
 │       ├── helpers.js      # 超时预警计算、状态机
-│       └── routes/         # vehicles / packages / stats
+│       └── routes/         # vehicles / packages / work-orders / stats
 └── client/                 # React 前端
     └── src/
-        ├── pages/          # 总览 / 车辆 / 包裹 / 统计
+        ├── pages/          # 总览 / 车辆 / 包裹 / 异常工单 / 统计
         └── components/     # 通用组件
 ```

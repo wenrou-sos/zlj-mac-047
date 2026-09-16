@@ -20,7 +20,8 @@ router.get('/', async (req, res) => {
        COUNT(p.id) FILTER (WHERE p.status = 'pending')::int      AS pending_count,
        COUNT(p.id) FILTER (WHERE p.status = 'sorted')::int       AS sorted_count,
        COUNT(p.id) FILTER (WHERE p.status = 'loaded')::int       AS loaded_count,
-       COUNT(p.id) FILTER (WHERE p.status = 'intercepted')::int  AS intercepted_count
+       COUNT(p.id) FILTER (WHERE p.status = 'intercepted')::int  AS intercepted_count,
+       COUNT(p.id) FILTER (WHERE p.status = 'returned')::int     AS returned_count
      FROM vehicles v
      LEFT JOIN packages p ON p.vehicle_id = v.id
      ${where}
@@ -71,10 +72,15 @@ router.post('/:id/action/:action', async (req, res) => {
       [id]
     );
   }
-  // 发车：已分拣包裹自动装车；拦截件留在场地，不随车发走
+  // 发车：已分拣包裹自动装车；拦截件及尚有未结工单的包裹留在场地，不随车发走
   if (action === 'depart') {
     await query(
-      `UPDATE packages SET status = 'loaded' WHERE vehicle_id = $1 AND status = 'sorted'`,
+      `UPDATE packages SET status = 'loaded'
+       WHERE vehicle_id = $1 AND status = 'sorted'
+         AND NOT EXISTS (
+           SELECT 1 FROM work_orders w
+           WHERE w.package_id = packages.id AND w.status IN ('open','processing','pending_review')
+         )`,
       [id]
     );
   }

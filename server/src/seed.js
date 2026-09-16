@@ -1,5 +1,6 @@
-// 本地模拟数据：生成车辆班次 + 包裹，覆盖各种业务状态（含超时、异常场景）
+// 本地模拟数据：生成车辆班次 + 包裹 + 异常处置工单，覆盖各种业务状态（含超时、异常场景）
 import { query } from './db.js';
+import { CONCLUSION_LABEL } from './helpers.js';
 
 const ROUTES = [
   { code: 'BJ-SH',  from: '北京', to: '上海' },
@@ -13,6 +14,8 @@ const ROUTES = [
 ];
 const DESTINATIONS = ['上海', '北京', '广州', '深圳', '杭州', '成都', '武汉', '南京', '西安', '重庆', '长沙', '苏州'];
 const DRIVERS = ['张伟', '王强', '李军', '刘洋', '陈杰', '杨帆', '赵磊', '黄勇', '周斌', '吴涛', '徐明', '孙浩', '马飞'];
+const STAFF = ['王芳', '李强', '赵敏', '陈晨', '刘佳', '周涛'];
+const RETURN_DESTS = ['退回发件人', '退回始发分拨中心', '退回寄件网点'];
 const ABNORMAL = [
   ['damaged', '外包装破损', 0.35],
   ['wrong_route', '错分线路', 0.25],
@@ -38,31 +41,154 @@ const abnormalNote = (type) => ABNORMAL.find(([t]) => t === type)[1];
 let trackingSeq = 100000;
 const nextTrackingNo = () => `SF${Date.now().toString().slice(-8)}${(trackingSeq++).toString().slice(-6)}`;
 
+// 工单场景：open待认领 / processing处理中 / pending_review待复核
+//          closed_repair修复放行 / closed_return退回 / closed_isolate继续隔离
+function pickScenario() {
+  const r = Math.random();
+  if (r < 0.30) return 'open';
+  if (r < 0.55) return 'processing';
+  if (r < 0.70) return 'pending_review';
+  if (r < 0.85) return 'closed_repair';
+  if (r < 0.93) return 'closed_return';
+  return 'closed_isolate';
+}
+
+// 生成一张工单及其完整流转留档（interceptedAt 为拦截时间，事件时间顺推）
+async function insertWorkOrderFlow(packageId, type, note, scenario, interceptedAt, returnDestination) {
+  const creator = pick(STAFF);
+  const assignee = pick(STAFF);
+  const reviewer = pick(STAFF.filter((s) => s !== assignee));
+  const at = (m) => new Date(interceptedAt.getTime() + m * 60_000);
+
+  const claimed = scenario !== 'open';
+  const submitted = ['pending_review', 'closed_repair', 'closed_return', 'closed_isolate'].includes(scenario);
+  const closed = scenario.startsWith('closed_');
+  const conclusion = closed
+    ? { closed_repair: 'repair_release', closed_return: 'return', closed_isolate: 'isolate' }[scenario]
+    : submitted ? pick(['repair_release', 'return', 'isolate']) : null;
+  // 部分结案工单曾被打回补充证据
+  const rejected = closed && Math.random() < 0.4;
+
+  const status = closed ? 'closed' : submitted ? 'pending_review' : claimed ? 'processing' : 'open';
+  const claimedAt = claimed ? at(5) : null;
+  const submittedAt = submitted ? at(rejected ? 55 : 35) : null;
+  const reviewedAt = closed || rejected ? at(rejected ? 80 : 55) : null;
+  const closedAt = closed ? reviewedAt : null;
+
+  const [wo] = await query(
+    `INSERT INTO work_orders (package_id, abnormal_type, note, status, conclusion, conclusion_note,
+       return_destination, created_by, assignee, submitted_by, reviewed_by, review_note, reject_count,
+       claimed_at, submitted_at, reviewed_at, closed_at, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+    [
+      packageId, type, note, status, conclusion,
+      submitted ? '现场处置完毕，申请结案' : null,
+      conclusion === 'return' ? returnDestination || pick(RETURN_DESTS) : null,
+      creator, claimed ? assignee : null, submitted ? assignee : null,
+      closed || rejected ? reviewer : null,
+      closed ? '复核通过' : rejected ? '证据不足，补充后重新提交' : null,
+      rejected ? 1 : 0,
+      claimedAt, submittedAt, reviewedAt, closedAt, interceptedAt,
+    ]
+  );
+
+  const events = [['create', creator, `拦截登记：${note}`, interceptedAt]];
+  if (claimed) events.push(['claim', assignee, `${assignee} 认领了工单`, at(5)]);
+  if (claimed && Math.random() < 0.6) {
+    events.push(['evidence', assignee, '现场照片 2 张，异常位置已标注', at(15)]);
+  }
+  if (rejected) {
+    events.push(['submit', assignee, `提交结论：${CONCLUSION_LABEL[conclusion]}`, at(25)]);
+    events.push(['reject', reviewer, '复核驳回：证据不足，补充后重新提交', at(40)]);
+    events.push(['evidence', assignee, '补充称重记录与监控截图', at(50)]);
+  }
+  if (submitted) {
+    events.push(['submit', assignee, `提交结论：${CONCLUSION_LABEL[conclusion]}（现场处置完毕，申请结案）`, submittedAt]);
+  }
+  if (closed) {
+    events.push(['approve', reviewer, `复核通过，结论「${CONCLUSION_LABEL[conclusion]}」已生效`, closedAt]);
+  }
+  for (const [action, actor, detail, ts] of events) {
+    await query(
+      'INSERT INTO work_order_events (work_order_id, action, actor, detail, created_at) VALUES ($1,$2,$3,$4,$5)',
+      [wo.id, action, actor, detail, ts]
+    );
+  }
+}
+
+// 异常包裹：按工单场景决定包裹当前状态，并生成对应工单
+async function insertAbnormalPackage(vehicleId, stage) {
+  const type = pickAbnormalType();
+  const note = abnormalNote(type);
+  const scenario = pickScenario();
+  const createdAt = minutesAgo(rand(60, 600));
+
+  let status = 'intercepted';
+  let isAbnormal = true;
+  let sortedAt = null;
+  let releasedAt = null;
+  let returnedAt = null;
+  let returnDestination = null;
+  let interceptedAt;
+
+  if (scenario === 'closed_repair') {
+    // 修复放行：包裹已恢复正常流转
+    interceptedAt = minutesAgo(rand(150, 400));
+    releasedAt = minutesAgo(rand(30, 140));
+    status = stage === 'departed' ? 'loaded' : Math.random() < 0.6 ? 'sorted' : 'pending';
+    if (status !== 'pending') sortedAt = releasedAt;
+    isAbnormal = false;
+  } else if (scenario === 'closed_return') {
+    // 退回：独立去向，退出正常待发库存
+    interceptedAt = minutesAgo(rand(150, 400));
+    status = 'returned';
+    returnDestination = pick(RETURN_DESTS);
+    returnedAt = minutesAgo(rand(30, 140));
+  } else if (scenario === 'closed_isolate') {
+    interceptedAt = minutesAgo(rand(150, 400));
+  } else if (scenario === 'pending_review') {
+    interceptedAt = minutesAgo(rand(60, 200));
+  } else if (scenario === 'processing') {
+    interceptedAt = minutesAgo(rand(30, 150));
+  } else {
+    interceptedAt = minutesAgo(rand(5, 90));
+  }
+
+  const [pkg] = await query(
+    `INSERT INTO packages (tracking_no, vehicle_id, destination, weight_kg, status,
+      is_abnormal, abnormal_type, abnormal_note, intercepted_at, intercept_released_at,
+      return_destination, returned_at, sorted_at, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
+    [
+      nextTrackingNo(), vehicleId, pick(DESTINATIONS), (rand(1, 3000) / 100).toFixed(2),
+      status, isAbnormal, type, note, interceptedAt, releasedAt,
+      returnDestination, returnedAt, sortedAt, createdAt,
+    ]
+  );
+  await insertWorkOrderFlow(pkg.id, type, note, scenario, interceptedAt, returnDestination);
+}
+
 async function insertPackages(vehicleId, count, stage) {
   // stage 决定包裹状态分布
   for (let i = 0; i < count; i++) {
-    const abnormal = Math.random() < 0.05;
+    if (Math.random() < 0.05) {
+      await insertAbnormalPackage(vehicleId, stage);
+      continue;
+    }
     let status = 'pending';
     let sortedAt = null;
-    if (!abnormal) {
-      if (stage === 'departed') status = 'loaded';
-      else if (stage === 'sorted') status = Math.random() < 0.7 ? 'loaded' : 'sorted';
-      else if (stage === 'sorting') status = Math.random() < 0.5 ? 'sorted' : 'pending';
-    }
+    if (stage === 'departed') status = 'loaded';
+    else if (stage === 'sorted') status = Math.random() < 0.7 ? 'loaded' : 'sorted';
+    else if (stage === 'sorting') status = Math.random() < 0.5 ? 'sorted' : 'pending';
     if (status === 'sorted' || status === 'loaded') {
       sortedAt = minutesAgo(rand(5, 90));
     }
-    const type = abnormal ? pickAbnormalType() : null;
     await query(
-      `INSERT INTO packages (tracking_no, vehicle_id, destination, weight_kg, status,
-        is_abnormal, abnormal_type, abnormal_note, intercepted_at, sorted_at, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      `INSERT INTO packages (tracking_no, vehicle_id, destination, weight_kg, status, sorted_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
       [
         nextTrackingNo(), vehicleId, pick(DESTINATIONS), (rand(1, 3000) / 100).toFixed(2),
-        abnormal ? 'intercepted' : status,
-        abnormal, type, abnormal ? abnormalNote(type) : null,
-        abnormal ? minutesAgo(rand(10, 120)) : null,
-        sortedAt, minutesAgo(rand(60, 600)),
+        status, sortedAt, minutesAgo(rand(60, 600)),
       ]
     );
   }
@@ -84,7 +210,7 @@ export async function seedIfEmpty(force = false) {
   const [{ count }] = await query('SELECT COUNT(*)::int AS count FROM vehicles');
   if (count > 0 && !force) return false;
   if (force) {
-    await query('TRUNCATE packages, vehicles RESTART IDENTITY');
+    await query('TRUNCATE packages, vehicles, work_orders, work_order_events RESTART IDENTITY');
   }
 
   const plate = () => `沪A·${String(rand(10000, 99999))}`;
@@ -176,9 +302,19 @@ export async function seedIfEmpty(force = false) {
     if (pkgCount > 0) await insertPackages(id, pkgCount, stage);
   }
 
+  // 同一包裹多次异常分别留档：为部分拦截中的包裹补一条更早的已结案工单
+  const intercepted = await query(
+    `SELECT id, intercepted_at FROM packages WHERE status = 'intercepted' ORDER BY id LIMIT 3`
+  );
+  for (const p of intercepted) {
+    const earlier = new Date(new Date(p.intercepted_at).getTime() - rand(150, 400) * 60_000);
+    await insertWorkOrderFlow(p.id, pickAbnormalType(), '历史异常，已修复放行', 'closed_repair', earlier, null);
+  }
+
   const [v] = await query('SELECT COUNT(*)::int AS c FROM vehicles');
   const [p] = await query('SELECT COUNT(*)::int AS c FROM packages');
-  console.log(`[seed] 已生成模拟数据：车辆 ${v.c} 辆，包裹 ${p.c} 件`);
+  const [w] = await query('SELECT COUNT(*)::int AS c FROM work_orders');
+  console.log(`[seed] 已生成模拟数据：车辆 ${v.c} 辆，包裹 ${p.c} 件，工单 ${w.c} 张`);
   return true;
 }
 

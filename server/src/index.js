@@ -5,6 +5,7 @@ import { initSchema } from './schema.js';
 import { seedIfEmpty } from './seed.js';
 import vehiclesRouter from './routes/vehicles.js';
 import packagesRouter from './routes/packages.js';
+import workOrdersRouter from './routes/work-orders.js';
 import statsRouter from './routes/stats.js';
 
 const app = express();
@@ -15,6 +16,7 @@ app.use(express.json());
 
 app.use('/api/vehicles', vehiclesRouter);
 app.use('/api/packages', packagesRouter);
+app.use('/api/work-orders', workOrdersRouter);
 app.use('/api', statsRouter);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));

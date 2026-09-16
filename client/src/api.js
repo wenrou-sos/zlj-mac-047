@@ -27,7 +27,17 @@ export const api = {
   sortPackage: (id) => request(`/api/packages/${id}/sort`, { method: 'POST' }),
   loadPackage: (id) => request(`/api/packages/${id}/load`, { method: 'POST' }),
   interceptPackage: (id, body) => request(`/api/packages/${id}/intercept`, { method: 'POST', body: JSON.stringify(body) }),
-  releasePackage: (id) => request(`/api/packages/${id}/release`, { method: 'POST' }),
+  // 异常处置工单
+  workOrders: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/api/work-orders${qs ? `?${qs}` : ''}`);
+  },
+  workOrder: (id) => request(`/api/work-orders/${id}`),
+  claimWorkOrder: (id, body) => request(`/api/work-orders/${id}/claim`, { method: 'POST', body: JSON.stringify(body) }),
+  transferWorkOrder: (id, body) => request(`/api/work-orders/${id}/transfer`, { method: 'POST', body: JSON.stringify(body) }),
+  addEvidence: (id, body) => request(`/api/work-orders/${id}/evidence`, { method: 'POST', body: JSON.stringify(body) }),
+  submitConclusion: (id, body) => request(`/api/work-orders/${id}/submit`, { method: 'POST', body: JSON.stringify(body) }),
+  reviewWorkOrder: (id, body) => request(`/api/work-orders/${id}/review`, { method: 'POST', body: JSON.stringify(body) }),
   // 统计
   backlog: () => request('/api/stats/backlog'),
   abnormalStats: () => request('/api/stats/abnormal'),
