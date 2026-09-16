@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Plus, RefreshCw, Search, Ban, Undo2, PackageCheck, Forklift, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, RefreshCw, Search, Ban, Undo2, PackageCheck, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
 import { Badge, Modal, Empty } from '../components/common.jsx';
@@ -113,11 +113,12 @@ export default function Packages() {
                 <th>运单号</th>
                 <th>目的地</th>
                 <th>重量</th>
-                <th>所属车辆</th>
+                <th>进港来源班次</th>
+                <th>配载去向</th>
                 <th>状态</th>
                 <th>异常信息</th>
                 <th>到件时间</th>
-                <th style={{ width: 220 }}>操作</th>
+                <th style={{ width: 160 }}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -132,7 +133,17 @@ export default function Packages() {
                         <div>{p.plate_no}</div>
                         <div className="text-muted">{p.route_code}</div>
                       </>
-                    ) : <span className="text-muted">未分配</span>}
+                    ) : <span className="text-muted">无进港班次</span>}
+                  </td>
+                  <td>
+                    {p.plan_no ? (
+                      <div>
+                        <span className="mono" style={{ fontSize: 12 }}>{p.plan_no}</span>
+                        <div className="text-muted">{p.out_plate_no} · {p.out_route_code}</div>
+                      </div>
+                    ) : p.status === 'sorted' ? (
+                      <span className="text-muted">未配载</span>
+                    ) : <span className="text-muted">—</span>}
                   </td>
                   <td><Badge conf={PACKAGE_STATUS[p.status]} /></td>
                   <td>
@@ -159,21 +170,16 @@ export default function Packages() {
                         </>
                       )}
                       {p.status === 'sorted' && (
-                        <>
-                          <button className="btn btn-next btn-sm" onClick={() => run(() => api.loadPackage(p.id), '已装车')}>
-                            <Forklift size={13} /> 装车
-                          </button>
-                          <button className="btn btn-danger btn-sm" onClick={() => { setInterceptTarget(p); setInterceptForm({ abnormal_type: 'damaged', note: '' }); }}>
-                            <Ban size={13} /> 拦截
-                          </button>
-                        </>
+                        <button className="btn btn-danger btn-sm" onClick={() => { setInterceptTarget(p); setInterceptForm({ abnormal_type: 'damaged', note: '' }); }}>
+                          <Ban size={13} /> 拦截
+                        </button>
                       )}
                       {p.status === 'intercepted' && (
                         <button className="btn btn-sm" onClick={() => run(() => api.releasePackage(p.id), '已解除拦截')}>
                           <Undo2 size={13} /> 解除拦截
                         </button>
                       )}
-                      {p.status === 'loaded' && <span className="text-muted">已装车发运</span>}
+                      {p.status === 'loaded' && <span className="text-muted">已随班发运</span>}
                     </div>
                   </td>
                 </tr>

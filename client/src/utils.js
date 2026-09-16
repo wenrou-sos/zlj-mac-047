@@ -16,6 +16,13 @@ export const PACKAGE_STATUS = {
   intercepted: { label: '已拦截', color: '#b91c1c', bg: '#fee2e2' },
 };
 
+export const PLAN_STATUS = {
+  draft:     { label: '配载中', color: '#1d4ed8', bg: '#dbeafe' },
+  sealed:    { label: '已封车', color: '#b45309', bg: '#fef3c7' },
+  departed:  { label: '已发车', color: '#15803d', bg: '#dcfce7' },
+  cancelled: { label: '已撤单', color: '#64748b', bg: '#f1f5f9' },
+};
+
 export const ABNORMAL_TYPES = {
   damaged: '外包装破损',
   wrong_route: '错分线路',
@@ -34,6 +41,11 @@ export const fmtDateTime = (t) => {
   if (!t) return '—';
   const d = new Date(t);
   return `${d.getMonth() + 1}/${d.getDate()} ${fmtTime(t)}`;
+};
+
+export const fmtKg = (kg) => {
+  const n = Number(kg) || 0;
+  return n >= 1000 ? `${(n / 1000).toFixed(2)} t` : `${Math.round(n * 10) / 10} kg`;
 };
 
 // 距现在多少分钟，如 "12分钟前"

@@ -124,34 +124,13 @@ export const PLAN_STATUS_LABEL = {
 // 生效中（未发车但占用在场包裹）的配载单状态
 export const ACTIVE_PLAN_STATES = ['draft', 'sealed'];
 
-// 同一件不能被两张生效配载单占用：存在其它生效单时返回冲突单
-export async function findConflictingPlan(packageIds, excludePlanId = null) {
-  if (!packageIds.length) return null;
-  const params = [...packageIds];
-  const inIds = packageIds.map((_, i) => `$${i + 1}`).join(',');
-  let sql = `
-    SELECT lp.id, lp.plan_no, lp.vehicle_id, lp.status, lpi.package_id
-    FROM load_plan_items lpi
-    JOIN load_plans lp ON lp.id = lpi.plan_id
-    WHERE lpi.removed_at IS NULL
-      AND lp.status IN ('draft','sealed')
-      AND lpi.package_id IN (${inIds})`;
-  if (excludePlanId != null) {
-    params.push(excludePlanId);
-    sql += ` AND lp.id <> $${params.length}`;
-  }
-  sql += ' LIMIT 1';
-  const rows = await query(sql, params);
-  return rows[0] || null;
-}
-
-// 在场可配载包裹：已分拣、未被其它生效单占用、未拦截
+// 在场可配载包裹：已分拣、未被生效单占用（is_active 由 DB 触发器维护）、目的地可达、未过截单
 export async function findCandidates(vehicle, { destination, limitKg, now = new Date() } = {}) {
   const params = [];
   const conds = [
     "p.status = 'sorted'",
-    'NOT EXISTS (SELECT 1 FROM load_plan_items lpi2 JOIN load_plans lp2 ON lp2.id = lpi2.plan_id '
-      + "WHERE lpi2.package_id = p.id AND lpi2.removed_at IS NULL AND lp2.status IN ('draft','sealed'))",
+    'NOT EXISTS (SELECT 1 FROM load_plan_items lpi2 '
+      + "WHERE lpi2.package_id = p.id AND lpi2.is_active)",
   ];
   if (destination) {
     params.push(destination);
@@ -161,11 +140,11 @@ export async function findCandidates(vehicle, { destination, limitKg, now = new 
     params.push(vehicle.destinations);
     conds.push(`p.destination = ANY($${params.length}::text[])`);
   }
-  // 截单时间：场地上在截单前完成分拣的件才能配上班
+  // 截单语义：当前时间超过班次截单点后，不再向该班次配载（件赶不上发车）；
+  // 件只要在发车前完成分拣即可，越早分拣越优先
   const cutoff = await computeCutoff(vehicle);
-  if (cutoff) {
-    params.push(cutoff);
-    conds.push(`p.sorted_at IS NOT NULL AND p.sorted_at <= $${params.length}`);
+  if (cutoff && now > cutoff) {
+    return [];
   }
   // 先进先出：先分拣、先到件优先
   const rows = await query(

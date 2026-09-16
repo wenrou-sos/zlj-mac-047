@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Truck, Package, PackageCheck, Ban, AlertTriangle, AlertOctagon, RefreshCw, ArrowRight, Clock } from 'lucide-react';
+import { Truck, Package, PackageCheck, Ban, AlertTriangle, AlertOctagon, RefreshCw, ArrowRight, Clock, ClipboardList } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
 import { StatCard, Empty } from '../components/common.jsx';
 import { fmtAgo } from '../utils.js';
 
-const PIE_COLORS = { pending: '#f59e0b', sorted: '#8b5cf6', loaded: '#22c55e', intercepted: '#ef4444' };
-const PIE_LABEL = { pending: '待分拣', sorted: '已分拣', loaded: '已装车', intercepted: '已拦截' };
+const PIE_COLORS = { pending: '#f59e0b', unplanned: '#a78bfa', planned: '#2563eb', loaded: '#22c55e', intercepted: '#ef4444' };
+const PIE_LABEL = { pending: '待分拣', unplanned: '已分拣未配载', planned: '已配载待发车', loaded: '已装车发运', intercepted: '已拦截' };
 
 export default function Dashboard({ onAlertCount, goVehicles }) {
   const [overview, setOverview] = useState(null);
@@ -36,8 +36,9 @@ export default function Dashboard({ onAlertCount, goVehicles }) {
   if (!overview) return <div className="empty">加载中…</div>;
 
   const pkg = overview.packages;
-  const pieData = ['pending', 'sorted', 'loaded', 'intercepted']
-    .map((k) => ({ key: k, name: PIE_LABEL[k], value: pkg[k] }))
+  const unplanned = pkg.sorted - (pkg.planned || 0);
+  const pieData = ['pending', 'unplanned', 'planned', 'loaded', 'intercepted']
+    .map((k) => ({ key: k, name: PIE_LABEL[k], value: k === 'unplanned' ? unplanned : pkg[k] }))
     .filter((d) => d.value > 0);
 
   return (
@@ -56,7 +57,8 @@ export default function Dashboard({ onAlertCount, goVehicles }) {
       <div className="stat-grid">
         <StatCard icon={<Truck size={22} />} label="在场作业车辆" value={overview.vehicles.active_vehicles} iconBg="#dbeafe" iconColor="#1d4ed8" />
         <StatCard icon={<Package size={22} />} label="待分拣包裹" value={pkg.pending} iconBg="#fef3c7" iconColor="#b45309" />
-        <StatCard icon={<PackageCheck size={22} />} label="已装车包裹" value={pkg.loaded} iconBg="#dcfce7" iconColor="#15803d" />
+        <StatCard icon={<ClipboardList size={22} />} label="已配载待发车" value={pkg.planned} iconBg="#dbeafe" iconColor="#1d4ed8" />
+        <StatCard icon={<PackageCheck size={22} />} label="已装车发运" value={pkg.loaded} iconBg="#dcfce7" iconColor="#15803d" />
         <StatCard icon={<Ban size={22} />} label="拦截异常件" value={pkg.intercepted} iconBg="#fee2e2" iconColor="#b91c1c" />
         <StatCard
           icon={<AlertTriangle size={22} />}

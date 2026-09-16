@@ -1,9 +1,10 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
-import { LayoutDashboard, Truck, Package, BarChart3, CheckCircle2, XCircle, Boxes } from 'lucide-react';
+import { LayoutDashboard, Truck, Package, BarChart3, CheckCircle2, XCircle, Boxes, ClipboardList } from 'lucide-react';
 import Dashboard from './pages/Dashboard.jsx';
 import Vehicles from './pages/Vehicles.jsx';
 import Packages from './pages/Packages.jsx';
 import Stats from './pages/Stats.jsx';
+import LoadPlans from './pages/LoadPlans.jsx';
 
 const ToastCtx = createContext(() => {});
 export const useToast = () => useContext(ToastCtx);
@@ -11,6 +12,7 @@ export const useToast = () => useContext(ToastCtx);
 const PAGES = [
   { key: 'dashboard', label: '监控总览', icon: LayoutDashboard },
   { key: 'vehicles', label: '车辆班次', icon: Truck },
+  { key: 'plans', label: '出港配载', icon: ClipboardList },
   { key: 'packages', label: '包裹与拦截', icon: Package },
   { key: 'stats', label: '积压统计', icon: BarChart3 },
 ];
@@ -19,6 +21,7 @@ export default function App() {
   const [page, setPage] = useState('dashboard');
   const [toasts, setToasts] = useState([]);
   const [alertCount, setAlertCount] = useState(0);
+  const [planPreset, setPlanPreset] = useState(null);
   const idRef = useRef(0);
 
   const toast = useCallback((msg, type = 'info') => {
@@ -58,7 +61,8 @@ export default function App() {
 
         <main className="main">
           {page === 'dashboard' && <Dashboard onAlertCount={setAlertCount} goVehicles={() => setPage('vehicles')} />}
-          {page === 'vehicles' && <Vehicles />}
+          {page === 'vehicles' && <Vehicles goPlans={(vehicleId) => { setPlanPreset(vehicleId); setPage('plans'); }} />}
+          {page === 'plans' && <LoadPlans presetVehicleId={planPreset} onConsumePreset={() => setPlanPreset(null)} />}
           {page === 'packages' && <Packages />}
           {page === 'stats' && <Stats />}
         </main>

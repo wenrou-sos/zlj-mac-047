@@ -6,6 +6,7 @@ import { seedIfEmpty } from './seed.js';
 import vehiclesRouter from './routes/vehicles.js';
 import packagesRouter from './routes/packages.js';
 import statsRouter from './routes/stats.js';
+import loadPlansRouter from './routes/loadPlans.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -15,14 +16,17 @@ app.use(express.json());
 
 app.use('/api/vehicles', vehiclesRouter);
 app.use('/api/packages', packagesRouter);
+app.use('/api/load-plans', loadPlansRouter);
 app.use('/api', statsRouter);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 
 // 统一错误处理
 app.use((err, req, res, next) => {
-  console.error('[error]', err);
-  res.status(500).json({ error: '服务器内部错误: ' + err.message });
+  const status = err.status || 500;
+  if (status >= 500) console.error('[error]', err);
+  else console.warn(`[${status}]`, req.method, req.originalUrl, '-', err.message);
+  res.status(status).json({ error: status >= 500 ? '服务器内部错误: ' + err.message : err.message });
 });
 
 await initSchema();

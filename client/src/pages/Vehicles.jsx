@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, RefreshCw, Truck, Check, ArrowRight, Trash2, AlertOctagon } from 'lucide-react';
+import { Plus, RefreshCw, Truck, Check, ArrowRight, Trash2, AlertOctagon, ClipboardList } from 'lucide-react';
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
 import { Badge, Modal, Empty } from '../components/common.jsx';
-import { VEHICLE_STATUS, fmtTime, fmtAgo } from '../utils.js';
+import { VEHICLE_STATUS, fmtTime, fmtAgo, fmtKg } from '../utils.js';
 
 const NEXT_ACTION = {
   expected:  { action: 'arrive',       label: '确认到车' },
@@ -40,12 +40,12 @@ function Timeline({ v }) {
   );
 }
 
-export default function Vehicles() {
+export default function Vehicles({ goPlans }) {
   const [vehicles, setVehicles] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [filter, setFilter] = useState('');
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ plate_no: '', route_code: '', driver_name: '', planned_arrival: '', planned_departure: '' });
+  const [form, setForm] = useState({ plate_no: '', route_code: '', driver_name: '', planned_arrival: '', planned_departure: '', capacity_kg: '', cutoff_min: '30', destinations: '' });
   const toast = useToast();
 
   const load = async () => {
@@ -76,8 +76,10 @@ export default function Vehicles() {
     const next = NEXT_ACTION[v.status];
     if (!next) return;
     try {
-      await api.vehicleAction(v.id, next.action);
-      toast(`${v.plate_no} ${next.label}成功`, 'success');
+      const r = await api.vehicleAction(v.id, next.action);
+      toast(next.action === 'depart'
+        ? `${v.plate_no} 已发车，${r._loaded_count} 件按实际配载清单装车`
+        : `${v.plate_no} ${next.label}成功`, 'success');
       load();
     } catch (e) {
       toast(e.message, 'error');
@@ -107,10 +109,13 @@ export default function Vehicles() {
         ...form,
         planned_arrival: toISO(form.planned_arrival),
         planned_departure: toISO(form.planned_departure),
+        capacity_kg: form.capacity_kg ? Number(form.capacity_kg) : undefined,
+        cutoff_min: form.cutoff_min === '' ? null : Number(form.cutoff_min),
+        destinations: form.destinations || undefined,
       });
       toast('到车预报已登记', 'success');
       setShowCreate(false);
-      setForm({ plate_no: '', route_code: '', driver_name: '', planned_arrival: '', planned_departure: '' });
+      setForm({ plate_no: '', route_code: '', driver_name: '', planned_arrival: '', planned_departure: '', capacity_kg: '', cutoff_min: '30', destinations: '' });
       load();
     } catch (e) {
       toast(e.message, 'error');
@@ -149,9 +154,10 @@ export default function Vehicles() {
                 <th>车辆 / 线路</th>
                 <th>状态</th>
                 <th>作业时间线</th>
-                <th>包裹进度</th>
+                <th>进港件进度</th>
+                <th>出港配载</th>
                 <th>计划发车</th>
-                <th style={{ width: 210 }}>操作</th>
+                <th style={{ width: 250 }}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -188,6 +194,22 @@ export default function Vehicles() {
                       ) : <span className="text-muted">未到件</span>}
                     </td>
                     <td>
+                      {v.active_plan_count > 0 ? (
+                        <div>
+                          <div style={{ fontWeight: 600, color: 'var(--primary-dark)' }}>
+                            <ClipboardList size={13} style={{ verticalAlign: -2 }} /> {v.active_plan_count} 张生效单
+                          </div>
+                          <div className="text-muted">已配 {fmtKg(v.planned_kg)} / {fmtKg(v.capacity_kg)}</div>
+                        </div>
+                      ) : v.status === 'sorted' ? (
+                        <button className="btn btn-next btn-sm" onClick={() => goPlans?.(v.id)}>
+                          <ClipboardList size={13} /> 建立配载单
+                        </button>
+                      ) : v.departed_plan_count > 0 ? (
+                        <span className="text-muted">{v.departed_plan_count} 单已发运</span>
+                      ) : <span className="text-muted">—</span>}
+                    </td>
+                    <td>
                       <div className="mono">{fmtTime(v.planned_departure)}</div>
                       {v.departed_at
                         ? <div className="text-muted">实际 {fmtTime(v.departed_at)}</div>
@@ -198,6 +220,11 @@ export default function Vehicles() {
                         {next && (
                           <button className="btn btn-next btn-sm" onClick={() => doAction(v)}>
                             {next.label} <ArrowRight size={13} />
+                          </button>
+                        )}
+                        {v.status === 'sorted' && (
+                          <button className="btn btn-sm" onClick={() => goPlans?.(v.id)} title="管理出港配载单">
+                            <ClipboardList size={13} />
                           </button>
                         )}
                         {v.status === 'expected' && (
@@ -245,6 +272,20 @@ export default function Vehicles() {
           <div className="form-row">
             <label>计划发车时间</label>
             <input className="input" type="datetime-local" value={form.planned_departure} onChange={(e) => setForm({ ...form, planned_departure: e.target.value })} />
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div className="form-row" style={{ flex: 1 }}>
+              <label>额定载重 kg</label>
+              <input className="input" type="number" min="0" placeholder="默认 8000" value={form.capacity_kg} onChange={(e) => setForm({ ...form, capacity_kg: e.target.value })} />
+            </div>
+            <div className="form-row" style={{ flex: 1 }}>
+              <label>截单提前量（发车前分钟）</label>
+              <input className="input" type="number" min="0" placeholder="默认 30" value={form.cutoff_min} onChange={(e) => setForm({ ...form, cutoff_min: e.target.value })} />
+            </div>
+          </div>
+          <div className="form-row">
+            <label>承运目的地（逗号分隔，留空不限制）</label>
+            <input className="input" placeholder="如 重庆,成都" value={form.destinations} onChange={(e) => setForm({ ...form, destinations: e.target.value })} />
           </div>
         </Modal>
       )}

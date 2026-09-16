@@ -11,6 +11,23 @@ const DATA_DIR = process.env.PGDATA || path.join(__dirname, '..', 'data');
 
 let db;
 
+// 构造一个事务执行器：fn(run) 内全部 run() 同一连接、同一事务
+function makeTransaction(beginRunner) {
+  return async (fn) => {
+    const { run, commit, rollback, release } = await beginRunner();
+    try {
+      const result = await fn(run);
+      await commit();
+      return result;
+    } catch (e) {
+      await rollback();
+      throw e;
+    } finally {
+      release?.();
+    }
+  };
+}
+
 if (process.env.DATABASE_URL) {
   // 真实 PostgreSQL 服务器模式
   const { default: pg } = await import('pg').catch(() => {
@@ -25,10 +42,19 @@ if (process.env.DATABASE_URL) {
     async exec(text) {
       await pool.query(text);
     },
+    withTransaction: makeTransaction(async () => {
+      const client = await pool.connect();
+      return {
+        run: (text, params = []) => client.query(text, params).then((r) => r.rows),
+        commit: () => client.query('COMMIT'),
+        rollback: () => client.query('ROLLBACK').catch(() => {}),
+        release: () => client.release(),
+      };
+    }),
   };
   console.log('[db] 使用 PostgreSQL 服务器:', process.env.DATABASE_URL.replace(/\/\/.*@/, '//***@'));
 } else {
-  // PGlite 嵌入式模式（默认）
+  // PGlite 嵌入式模式（默认，单连接）
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const pglite = new PGlite(DATA_DIR);
   await pglite.waitReady;
@@ -40,10 +66,16 @@ if (process.env.DATABASE_URL) {
     async exec(text) {
       await pglite.exec(text);
     },
+    withTransaction: makeTransaction(async () => ({
+      run: (text, params = []) => pglite.query(text, params).then((r) => r.rows),
+      commit: () => pglite.query('COMMIT'),
+      rollback: () => pglite.query('ROLLBACK').catch(() => {}),
+    })),
   };
   console.log('[db] 使用嵌入式 PGlite，数据目录:', DATA_DIR);
 }
 
 export const query = (text, params) => db.query(text, params);
 export const exec = (text) => db.exec(text);
+export const withTransaction = (fn) => db.withTransaction(fn);
 export default db;

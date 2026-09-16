@@ -76,11 +76,45 @@ CREATE TABLE IF NOT EXISTS load_plan_items (
   package_id  INTEGER NOT NULL REFERENCES packages(id),
   added_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   added_by    VARCHAR(50),
-  removed_at  TIMESTAMPTZ,                            -- 改配/撤单时置位（历史留痕），生效占用只看 NULL
+  removed_at  TIMESTAMPTZ,                            -- 改配/撤单/发车时置位（历史留痕），生效占用只看 NULL
+  -- 是否为「生效占用」：明细未移除且父单处于配载中/已封车。由触发器维护。
+  is_active   BOOLEAN NOT NULL DEFAULT FALSE,
   UNIQUE (plan_id, package_id)
 );
 CREATE INDEX IF NOT EXISTS idx_lpi_package ON load_plan_items(package_id);
-CREATE INDEX IF NOT EXISTS idx_lpi_active  ON load_plan_items(package_id) WHERE removed_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_lpi_active  ON load_plan_items(package_id) WHERE is_active;
+
+-- 占用约束（数据库层强制）：同一件在任意时刻最多被一张「生效配载单」占用。
+-- 撤配/改配（removed_at 置位）、发车/撤单（父单状态变化）后 is_active=FALSE，自动释放占用。
+CREATE UNIQUE INDEX IF NOT EXISTS uq_lpi_active_package
+  ON load_plan_items(package_id) WHERE is_active;
+
+-- 同步 is_active：明细行随父单状态、自身 removed_at 变化
+CREATE OR REPLACE FUNCTION lpi_refresh_active() RETURNS trigger AS $$
+BEGIN
+  NEW.is_active := NEW.removed_at IS NULL
+    AND EXISTS (SELECT 1 FROM load_plans lp WHERE lp.id = NEW.plan_id AND lp.status IN ('draft','sealed'));
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_lpi_active ON load_plan_items;
+CREATE TRIGGER trg_lpi_active BEFORE INSERT OR UPDATE OF removed_at, plan_id ON load_plan_items
+  FOR EACH ROW EXECUTE FUNCTION lpi_refresh_active();
+
+-- 父单状态变化（封车/发车/撤单）时，连带刷新其全部明细的占用标记
+CREATE OR REPLACE FUNCTION lp_refresh_items_active() RETURNS trigger AS $$
+BEGIN
+  IF NEW.status IS DISTINCT FROM OLD.status THEN
+    UPDATE load_plan_items SET is_active = (
+      removed_at IS NULL AND NEW.status IN ('draft','sealed')
+    ) WHERE plan_id = NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_lp_status ON load_plans;
+CREATE TRIGGER trg_lp_status AFTER UPDATE OF status ON load_plans
+  FOR EACH ROW EXECUTE FUNCTION lp_refresh_items_active();
 
 -- 超时规则配置（分钟），可在页面上调整
 CREATE TABLE IF NOT EXISTS settings (

@@ -46,11 +46,14 @@ export default function Stats() {
 
   if (!backlog || !abnormal || !settings) return <div className="empty">加载中…</div>;
 
-  const backlogTotal = backlog.byStatus.reduce((s, x) => s + x.count, 0);
+  // 场地积压只算"未配载"（pending 全部 + sorted 中未进生效单的）；已配载待发车单列
+  const backlogTotal = backlog.byStatus.reduce((s, x) => s + (x.status === 'sorted' ? (x.count - (x.planned || 0)) : x.count), 0);
+  const plannedTotal = backlog.byStatus.reduce((s, x) => s + (x.planned || 0), 0);
   const trendData = backlog.trend.map((t) => ({
     name: `${24 - backlog.trend.indexOf(t) - 1}h前`,
     到件: t.arrived,
     分拣完成: t.sorted,
+    实际发车: t.loaded || 0,
   }));
 
   return (
@@ -58,7 +61,10 @@ export default function Stats() {
       <div className="page-header">
         <div>
           <h1>积压统计</h1>
-          <div className="sub">当前积压 <b style={{ color: 'var(--amber)' }}>{backlogTotal}</b> 件（待分拣 + 已分拣未装车）</div>
+          <div className="sub">
+            场地未配载积压 <b style={{ color: 'var(--amber)' }}>{backlogTotal}</b> 件
+            <span style={{ marginLeft: 12 }}>已配载待发车 <b style={{ color: '#1d4ed8' }}>{plannedTotal}</b> 件</span>
+          </div>
         </div>
         <button className="btn" onClick={load}><RefreshCw size={14} /> 刷新</button>
       </div>
@@ -76,6 +82,7 @@ export default function Stats() {
               <Legend />
               <Area type="monotone" dataKey="到件" stroke="#3b82f6" fill="#dbeafe" strokeWidth={2} />
               <Area type="monotone" dataKey="分拣完成" stroke="#22c55e" fill="#dcfce7" strokeWidth={2} />
+              <Area type="monotone" dataKey="实际发车" stroke="#1d4ed8" fill="#dbeafe" strokeWidth={2} strokeDasharray="4 3" />
             </AreaChart>
           </ResponsiveContainer>
         </div>
@@ -88,11 +95,20 @@ export default function Stats() {
           <div className="card-body" style={{ height: 260 }}>
             {backlog.byDestination.length === 0 ? <Empty text="当前无积压" /> : (
               <ResponsiveContainer>
-                <BarChart data={backlog.byDestination} layout="vertical" margin={{ left: 10 }}>
+                <BarChart
+                  data={backlog.byDestination.map((d) => ({
+                    destination: d.destination,
+                    未配载: d.unplanned ?? d.count,
+                    已配载: d.planned || 0,
+                  }))}
+                  layout="vertical" margin={{ left: 10 }}
+                >
                   <XAxis type="number" fontSize={11} tick={{ fill: '#94a3b8' }} />
                   <YAxis type="category" dataKey="destination" fontSize={12} width={50} tick={{ fill: '#475569' }} />
-                  <Tooltip formatter={(v) => [`${v} 件`, '积压']} />
-                  <Bar dataKey="count" fill="#f59e0b" radius={[0, 4, 4, 0]} barSize={16} />
+                  <Tooltip formatter={(v) => [`${v} 件`]} />
+                  <Legend />
+                  <Bar dataKey="未配载" stackId="a" fill="#f59e0b" radius={[0, 4, 4, 0]} barSize={14} />
+                  <Bar dataKey="已配载" stackId="a" fill="#3b82f6" barSize={14} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -156,11 +172,11 @@ export default function Stats() {
 
         {/* 车辆积压明细 */}
         <div className="card section-gap">
-          <div className="card-header"><h3>在场车辆积压明细</h3></div>
+          <div className="card-header"><h3>在场车辆积压与配载明细</h3></div>
           <div className="table-wrap">
             <table className="tbl">
               <thead>
-                <tr><th>车辆</th><th>线路</th><th>状态</th><th>待分拣</th><th>已分拣未装车</th></tr>
+                <tr><th>车辆</th><th>线路</th><th>状态</th><th>待分拣</th><th>已分拣未配载</th><th>生效配载单</th><th>配载重量</th></tr>
               </thead>
               <tbody>
                 {backlog.byVehicle.map((v) => (
@@ -171,7 +187,11 @@ export default function Stats() {
                     <td className="mono" style={{ color: v.pending > 0 ? 'var(--amber)' : 'inherit', fontWeight: v.pending > 0 ? 700 : 400 }}>
                       {v.pending}
                     </td>
-                    <td className="mono">{v.sorted}</td>
+                    <td className="mono">{Math.max(0, v.sorted - v.planned_items)}</td>
+                    <td className="mono">{v.active_plans || 0}</td>
+                    <td className="mono text-muted">
+                      {v.planned_items ? `${Math.round(v.planned_kg)}/${Math.round(v.capacity_kg)} kg` : '—'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
