@@ -8,7 +8,22 @@ export async function getSettings() {
     unload_timeout_min: s.unload_timeout_min ?? 30,
     sort_timeout_min: s.sort_timeout_min ?? 60,
     warn_ratio: s.warn_ratio ?? 0.8,
+    cutoff_lead_min: s.cutoff_lead_min ?? 30,
   };
+}
+
+/**
+ * 班次截单时间：计划发车前 cutoff_min（缺省取全局 cutoff_lead_min）。
+ * 无计划发车时间则无截单限制。
+ */
+export async function computeCutoff(vehicle) {
+  if (!vehicle.planned_departure) return null;
+  let lead = vehicle.cutoff_min;
+  if (lead == null) {
+    const s = await getSettings();
+    lead = s.cutoff_lead_min;
+  }
+  return new Date(new Date(vehicle.planned_departure).getTime() - lead * 60_000);
 }
 
 const STAGE_LABEL = { unload: '卸车', sort: '分拣', departure: '发车' };
@@ -100,3 +115,73 @@ export const ABNORMAL_TYPE_LABEL = {
   damaged: '外包装破损', wrong_route: '错分线路', overweight: '超重超限',
   prohibited: '疑似违禁品', address_issue: '地址信息异常',
 };
+
+// ── 出港配载单 ────────────────────────────────────────────────────────
+export const PLAN_STATUS_LABEL = {
+  draft: '配载中', sealed: '已封车', departed: '已发车', cancelled: '已撤单',
+};
+
+// 生效中（未发车但占用在场包裹）的配载单状态
+export const ACTIVE_PLAN_STATES = ['draft', 'sealed'];
+
+// 同一件不能被两张生效配载单占用：存在其它生效单时返回冲突单
+export async function findConflictingPlan(packageIds, excludePlanId = null) {
+  if (!packageIds.length) return null;
+  const params = [...packageIds];
+  const inIds = packageIds.map((_, i) => `$${i + 1}`).join(',');
+  let sql = `
+    SELECT lp.id, lp.plan_no, lp.vehicle_id, lp.status, lpi.package_id
+    FROM load_plan_items lpi
+    JOIN load_plans lp ON lp.id = lpi.plan_id
+    WHERE lpi.removed_at IS NULL
+      AND lp.status IN ('draft','sealed')
+      AND lpi.package_id IN (${inIds})`;
+  if (excludePlanId != null) {
+    params.push(excludePlanId);
+    sql += ` AND lp.id <> $${params.length}`;
+  }
+  sql += ' LIMIT 1';
+  const rows = await query(sql, params);
+  return rows[0] || null;
+}
+
+// 在场可配载包裹：已分拣、未被其它生效单占用、未拦截
+export async function findCandidates(vehicle, { destination, limitKg, now = new Date() } = {}) {
+  const params = [];
+  const conds = [
+    "p.status = 'sorted'",
+    'NOT EXISTS (SELECT 1 FROM load_plan_items lpi2 JOIN load_plans lp2 ON lp2.id = lpi2.plan_id '
+      + "WHERE lpi2.package_id = p.id AND lpi2.removed_at IS NULL AND lp2.status IN ('draft','sealed'))",
+  ];
+  if (destination) {
+    params.push(destination);
+    conds.push(`p.destination = $${params.length}`);
+  }
+  if (vehicle.destinations && vehicle.destinations.length) {
+    params.push(vehicle.destinations);
+    conds.push(`p.destination = ANY($${params.length}::text[])`);
+  }
+  // 截单时间：场地上在截单前完成分拣的件才能配上班
+  const cutoff = await computeCutoff(vehicle);
+  if (cutoff) {
+    params.push(cutoff);
+    conds.push(`p.sorted_at IS NOT NULL AND p.sorted_at <= $${params.length}`);
+  }
+  // 先进先出：先分拣、先到件优先
+  const rows = await query(
+    `SELECT p.* FROM packages p
+     WHERE ${conds.join(' AND ')}
+     ORDER BY p.sorted_at ASC NULLS LAST, p.created_at ASC, p.id ASC`,
+    params
+  );
+  // 按剩余容量贪心装入；装不下的留待下一班
+  const picked = [];
+  let used = 0;
+  for (const p of rows) {
+    const w = Number(p.weight_kg);
+    if (limitKg != null && used + w > Number(limitKg)) continue; // 装不下，留待下一班
+    picked.push(p);
+    used += w;
+  }
+  return picked;
+}
