@@ -180,6 +180,56 @@ f = (await req(`/packages?q=${pkgF.tracking_no}`)).items[0];
 assert(f.status === 'sorted' && f.current_location_id === tLoc7.id,
   '跨库位错位调账受控恢复：status 还原 sorted，位置落在实盘库位');
 
+// 9. 另一库位扫码后“取消盘点”，不能让原库位免算盘亏（已取消扫描无效）
+const tLoc8 = await makeLoc(unique('T8-'));
+const tLoc9 = await makeLoc(unique('T9-'));
+const pkgG = await req('/packages', { method: 'POST', body: { tracking_no: unique('ST-G-'), destination: '天津' }}, 201);
+await req(`/packages/${pkgG.id}/sort`, { method: 'POST', body: { target_location_id: tLoc8.id } });
+// 原库位 A 发起盘点（reviewing，盘亏差异待复核）
+const st8 = await req('/stocktakes', { method: 'POST', body: { location_id: tLoc8.id }}, 201);
+const done8 = await req(`/stocktakes/${st8.id}/complete`, { method: 'POST' });
+const shortG = done8.differences.find((x) => x.tracking_no === pkgG.tracking_no && x.diff_type === 'shortage');
+assert(shortG, 'A 库位生成待复核盘亏差异');
+// 另一库位 B 盘点扫到该件（错位），随后取消 B
+const st9 = await req('/stocktakes', { method: 'POST', body: { location_id: tLoc9.id }}, 201);
+const scanG = await req(`/stocktakes/${st9.id}/scan`, { method: 'POST', body: {
+  tracking_no: pkgG.tracking_no, observed_location_id: tLoc9.id,
+}}, 201);
+assert(scanG.differences.some((x) => x.tracking_no === pkgG.tracking_no && x.diff_type === 'misplaced'),
+  'B 库位扫描形成错位线索');
+await req(`/stocktakes/${st9.id}/cancel`, { method: 'POST' });
+// A 复核并调账盘亏：取消的 B 扫描不得免算
+await req(`/stocktakes/${st8.id}/differences/${shortG.id}/review`, {
+  method: 'PUT', body: { decision: 'confirmed', note: '他单已取消，维持盘亏' },
+});
+await req(`/stocktakes/${st8.id}/adjust`, { method: 'POST' });
+const gAfter = (await req(`/packages?q=${pkgG.tracking_no}`)).items[0];
+assert(gAfter.status === 'lost' && gAfter.location_code === 'LOST-01',
+  '他单取消后其扫描不被采信，原库位盘亏正常调账');
+
+// 10. 另一库位仅在“盘点中”扫到（未定论），也不能让原库位免算盘亏
+const tLoc10 = await makeLoc(unique('T10-'));
+const tLoc11 = await makeLoc(unique('T11-'));
+const pkgH = await req('/packages', { method: 'POST', body: { tracking_no: unique('ST-H-'), destination: '重庆' }}, 201);
+await req(`/packages/${pkgH.id}/sort`, { method: 'POST', body: { target_location_id: tLoc10.id } });
+const st10 = await req('/stocktakes', { method: 'POST', body: { location_id: tLoc10.id }}, 201);
+// B 库位先发起盘点并扫到该件，停留在 counting（未定稿）
+const st11 = await req('/stocktakes', { method: 'POST', body: { location_id: tLoc11.id }}, 201);
+await req(`/stocktakes/${st11.id}/scan`, { method: 'POST', body: {
+  tracking_no: pkgH.tracking_no, observed_location_id: tLoc11.id,
+}}, 201);
+// 原库位结束盘点：counting 的他单扫描不足以免算盘亏
+const done10 = await req(`/stocktakes/${st10.id}/complete`, { method: 'POST' });
+const shortH = done10.differences.find((x) => x.tracking_no === pkgH.tracking_no && x.diff_type === 'shortage');
+assert(shortH, '他单仅盘点中（未定稿）时，原库位仍生成盘亏差异');
+await req(`/stocktakes/${st10.id}/differences/${shortH.id}/review`, {
+  method: 'PUT', body: { decision: 'confirmed', note: '他单未定稿，维持盘亏' },
+});
+await req(`/stocktakes/${st10.id}/adjust`, { method: 'POST' });
+const hAfter = (await req(`/packages?q=${pkgH.tracking_no}`)).items[0];
+assert(hAfter.status === 'lost' && hAfter.location_code === 'LOST-01',
+  '未定稿扫描不被采信，原库位盘亏正常调账');
+
 console.log(failures ? `\n${failures} 个断言失败` : '\n全部集成场景通过');
 process.exit(failures ? 1 : 0);
 

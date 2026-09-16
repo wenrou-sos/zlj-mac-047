@@ -102,8 +102,10 @@ async function findPeriodMove(packageId, stocktake, direction, locationId, execu
   return row || null;
 }
 
-// 跨库位盘点：该件在“其他库位盘点单”中被有效扫到实物（相符/期间移入/错位）。
-// A 库位盘亏候选、B 库位扫到实物时应核销 A 的盘亏，而不是把已找到的件判成丢失。
+// 跨库位盘点：该件在“其他库位盘点单”中被有效扫到实物。
+// 只有已调账(adjusted，不可取消)的盘点单结论才可被自动采信；
+// counting/reviewing 的扫描尚待定论，cancelled 的扫描一律无效，
+// 防止“另一库位扫码后取消盘点，原库位却免算/误判盘亏”。
 async function findCrossStocktakeFound(packageId, stocktakeId, sinceTime = null, executor = query) {
   const params = [packageId, stocktakeId];
   let timeClause = '';
@@ -117,6 +119,7 @@ async function findCrossStocktakeFound(packageId, stocktakeId, sinceTime = null,
      JOIN stocktakes s ON s.id = sc.stocktake_id
      JOIN locations l ON l.id = sc.observed_location_id
      WHERE sc.package_id = $1 AND sc.stocktake_id <> $2
+       AND s.status = 'adjusted'
        AND sc.result IN ('matched','period_in','misplaced')
        ${timeClause}
      ORDER BY sc.observed_at DESC`,
@@ -124,17 +127,21 @@ async function findCrossStocktakeFound(packageId, stocktakeId, sinceTime = null,
   );
 }
 
-// 扫到实物后，自动驳回“其他盘点单”中同一件尚待复核的盘亏差异
+// 本单错位调账定论后，驳回“其他有效盘点单”中同一件尚待复核的盘亏差异。
+// 只处理 resolution='pending'：已确认的盘亏由调账时的冲突拦截交人工裁决。
 async function dismissCrossPendingShortages(executor, packageId, stocktake, message) {
   return executor(
-    `UPDATE stocktake_differences
+    `UPDATE stocktake_differences d
      SET resolution = 'dismissed',
-         resolution_note = COALESCE(resolution_note, $1),
-         reviewed_by = COALESCE(reviewed_by, '系统核销'),
+         resolution_note = COALESCE(d.resolution_note, $1),
+         reviewed_by = COALESCE(d.reviewed_by, '系统核销'),
          reviewed_at = NOW()
-     WHERE package_id = $2 AND diff_type = 'shortage' AND resolution = 'pending'
-       AND stocktake_id <> $3
-     RETURNING id`,
+     FROM stocktakes s
+     WHERE d.stocktake_id = s.id
+       AND d.package_id = $2 AND d.diff_type = 'shortage' AND d.resolution = 'pending'
+       AND d.stocktake_id <> $3
+       AND s.status <> 'cancelled'
+     RETURNING d.id`,
     [message, packageId, stocktake.id]
   );
 }
@@ -295,31 +302,14 @@ router.post('/:id/scan', async (req, res) => {
           [stocktake.id, trackingNo, observed.id, req.body?.destination || '待确认']
         );
       } else if (diffType === 'misplaced') {
-        const [misDiff] = await tq(
+        // 只记录本单错位线索；是否核销他单盘亏，要等本单复核并调账定论（adjusted 不可取消）后才发生，
+        // 避免“扫一下又取消盘点”就把原库位盘亏免掉。
+        await tq(
           `INSERT INTO stocktake_differences
              (stocktake_id, package_id, tracking_no, diff_type, expected_location_id,
               actual_location_id, actual_destination)
-           VALUES ($1,$2,$3,'misplaced',$4,$5,$6)
-           RETURNING *`,
+           VALUES ($1,$2,$3,'misplaced',$4,$5,$6)`,
           [stocktake.id, pkg.id, trackingNo, pkg.current_location_id, observed.id, pkg.destination]
-        );
-        // 实物已在本库位扫到：核销其他盘点单中同一件尚待复核的盘亏
-        const linked = await dismissCrossPendingShortages(
-          tq, pkg.id, stocktake,
-          `盘点单 #${stocktake.id} 在 ${stocktake.location_code} 扫到该件（错位），自动核销盘亏`
-        );
-        if (linked.length) {
-          await tq(
-            `UPDATE stocktake_differences SET resolution_note = COALESCE(resolution_note, $1)
-             WHERE id = $2`,
-            [`已核销其他盘点单的 ${linked.length} 条盘亏候选`, misDiff.id]
-          );
-        }
-      } else if (pkg && ['matched', 'period_in'].includes(result)) {
-        // 相符或盘点期间移入的实物扫到，同样核销其他盘点单挂着的盘亏候选
-        await dismissCrossPendingShortages(
-          tq, pkg.id, stocktake,
-          `盘点单 #${stocktake.id} 在 ${stocktake.location_code} 扫到该件，自动核销盘亏`
         );
       }
     });
@@ -518,7 +508,7 @@ router.post('/:id/adjust', async (req, res) => {
               { status: 409 }
             );
           }
-          // 4) 其他盘点单已确认（未必调账）的错位差异指向本件 → 盘亏与错位冲突，交复核员裁决
+          // 4) 其他“有效(未取消)”盘点单已确认但尚未调账的错位差异指向本件 → 盘亏与错位冲突，交复核员裁决
           const confirmedMisplaced = await tq(
             `SELECT d.id, s.id AS st_id, l.code AS location_code
              FROM stocktake_differences d
@@ -526,7 +516,7 @@ router.post('/:id/adjust', async (req, res) => {
              LEFT JOIN locations l ON l.id = d.actual_location_id
              WHERE d.package_id = $1 AND d.diff_type = 'misplaced'
                AND d.resolution = 'confirmed' AND d.adjusted_at IS NULL
-               AND d.stocktake_id <> $2
+               AND d.stocktake_id <> $2 AND s.status = 'reviewing'
              LIMIT 1`,
             [pkg.id, stocktake.id]
           );
@@ -572,9 +562,11 @@ router.post('/:id/adjust', async (req, res) => {
           // 跨库位盘点冲突：该件已被其他盘点单判盘亏并调账为 lost，此处扫到实物，受控恢复
           if (pkg.status === 'lost') {
             const [priorShortage] = await tq(
-              `SELECT * FROM stocktake_differences
-               WHERE package_id = $1 AND diff_type = 'shortage' AND adjusted_at IS NOT NULL
-               ORDER BY adjusted_at DESC LIMIT 1`,
+              `SELECT d.* FROM stocktake_differences d
+               JOIN stocktakes s ON s.id = d.stocktake_id
+               WHERE d.package_id = $1 AND d.diff_type = 'shortage'
+                 AND d.adjusted_at IS NOT NULL AND s.status = 'adjusted'
+               ORDER BY d.adjusted_at DESC LIMIT 1`,
               [pkg.id]
             );
             const restoreStatus = ['pending', 'sorted'].includes(priorShortage?.pre_adjust_status)
@@ -601,11 +593,20 @@ router.post('/:id/adjust', async (req, res) => {
               stocktakeId: stocktake.id,
               note: d.resolution_note || '跨库位错位找回，从盘亏受控恢复',
             }, tq);
+            // 本单已定论(adjusted 不可取消)：核销其他有效盘点单中同一件的待复核盘亏
+            await dismissCrossPendingShortages(
+              tq, pkg.id, stocktake,
+              `盘点单 #${stocktake.id} 已调账找回该件（${stocktake.location_code}），自动核销盘亏`
+            );
             continue;
           }
 
           if (pkg.current_location_id === d.actual_location_id) {
             await tq('UPDATE stocktake_differences SET adjusted_at = NOW() WHERE id = $1', [d.id]);
+            await dismissCrossPendingShortages(
+              tq, pkg.id, stocktake,
+              `盘点单 #${stocktake.id} 已确认该件实物在位（${stocktake.location_code}），自动核销盘亏`
+            );
             continue;
           }
           // 账面预期位置已与差异生成时不一致：差异生成后发生过移位（含装车），旧差异不得覆盖
@@ -626,6 +627,11 @@ router.post('/:id/adjust', async (req, res) => {
             stocktakeId: stocktake.id,
             note: d.resolution_note || '错位复核后调整到实盘库位',
           }, tq);
+          // 本单已定论(adjusted 不可取消)：核销其他有效盘点单中同一件的待复核盘亏
+          await dismissCrossPendingShortages(
+            tq, pkg.id, stocktake,
+            `盘点单 #${stocktake.id} 已调账将该件归位（${stocktake.location_code}），自动核销盘亏`
+          );
         }
       }
 
