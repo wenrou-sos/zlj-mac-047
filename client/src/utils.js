@@ -24,6 +24,20 @@ export const ABNORMAL_TYPES = {
   address_issue: '地址信息异常',
 };
 
+export const CHUTE_STATUS = {
+  active:   { label: '启用中', color: '#15803d', bg: '#dcfce7' },
+  disabled: { label: '已停用', color: '#b91c1c', bg: '#fee2e2' },
+};
+
+// 扫描分拣决策结果
+export const SCAN_OUTCOME = {
+  routed:         { label: '可分拣', color: '#15803d', bg: '#dcfce7' },
+  conflict:       { label: '规则冲突', color: '#b45309', bg: '#fef3c7' },
+  unmatched:      { label: '无匹配规则', color: '#b45309', bg: '#fef3c7' },
+  blocked:        { label: '拦截件', color: '#b91c1c', bg: '#fee2e2' },
+  already_done:   { label: '无需分拣', color: '#475569', bg: '#f1f5f9' },
+};
+
 export const fmtTime = (t) => {
   if (!t) return '—';
   const d = new Date(t);

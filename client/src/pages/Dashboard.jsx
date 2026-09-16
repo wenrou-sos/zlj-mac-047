@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Truck, Package, PackageCheck, Ban, AlertTriangle, AlertOctagon, RefreshCw, ArrowRight, Clock } from 'lucide-react';
+import { Truck, Package, PackageCheck, Ban, AlertTriangle, AlertOctagon, RefreshCw, ArrowRight, Clock, PackageSearch } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { api } from '../api.js';
 import { useToast } from '../App.jsx';
@@ -58,6 +58,13 @@ export default function Dashboard({ onAlertCount, goVehicles }) {
         <StatCard icon={<Package size={22} />} label="待分拣包裹" value={pkg.pending} iconBg="#fef3c7" iconColor="#b45309" />
         <StatCard icon={<PackageCheck size={22} />} label="已装车包裹" value={pkg.loaded} iconBg="#dcfce7" iconColor="#15803d" />
         <StatCard icon={<Ban size={22} />} label="拦截异常件" value={pkg.intercepted} iconBg="#fee2e2" iconColor="#b91c1c" />
+        <StatCard
+          icon={<PackageSearch size={22} />}
+          label="待判区包裹"
+          value={pkg.needs_review}
+          iconBg={pkg.needs_review > 0 ? '#fef3c7' : '#f1f5f9'}
+          iconColor={pkg.needs_review > 0 ? '#b45309' : '#94a3b8'}
+        />
         <StatCard
           icon={<AlertTriangle size={22} />}
           label="超时预警"

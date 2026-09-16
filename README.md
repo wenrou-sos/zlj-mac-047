@@ -51,6 +51,14 @@ cd client && npm install && npm run dev      # http://localhost:5173
 - 拦截后**禁止装车**（后端强制校验），处理完成后可解除拦截
 - 异常类型分布统计与最近拦截记录
 
+### 6. 分拣规则与格口
+- **格口维护**：新增格口、启用/停用；停用时可将引用规则一键**改道**到其他格口，未改道的规则扫描时自动落空
+- **规则版本化**：按「目的地 + 重量区间 + 优先级」配置规则，调整走 **草稿 → 试算 → 发布** 流程，同一时间仅一个发布版生效
+- **试算影响**：发布前用当前全部待分拣包裹模拟，输出自动路由覆盖率、规则冲突数、无匹配数、各格口预计负荷与规则命中排行
+- **扫描分拣**：扫描运单即返回**目标格口 + 命中原因 + 规则版本**；规则冲突（同级多规则命中）或无匹配时进入**待判区**，人工指定格口后出库
+- **版本留痕**：已分拣包裹保留当时的规则版本与命中原因快照，新版本发布不影响历史记录
+- **错分回流**：错分件（错分线路）复核后回流待分拣重新扫描；`sorted_at` 只记首分时间，**重分不重复增加完成量**；拦截件禁止分拣，重分不绕过异常拦截
+
 ## 切换真实 PostgreSQL
 
 ```bash
@@ -67,6 +75,8 @@ DATABASE_URL=postgres://user:pass@localhost:5432/express_hub npm start
 cd server && npm run seed -- --force
 ```
 
+注意：PGlite 为单进程写库，请先停止后端服务再执行重置，完成后再启动。
+
 ## API 一览
 
 | 方法 | 路径 | 说明 |
@@ -77,8 +87,15 @@ cd server && npm run seed -- --force
 | GET/POST | `/api/vehicles` | 班次列表 / 到车预报 |
 | POST | `/api/vehicles/:id/action/:action` | 状态推进（arrive / unload-start / unload-end / sort-start / sort-end / depart） |
 | GET/POST | `/api/packages` | 包裹查询 / 到件登记 |
-| POST | `/api/packages/:id/sort` `/load` | 分拣 / 装车 |
-| POST | `/api/packages/:id/intercept` `/release` | 拦截 / 解除拦截 |
+| POST | `/api/packages/scan` | 扫描分拣决策（目标格口 + 命中原因，不改状态） |
+| POST | `/api/packages/:id/sort` `/load` | 分拣（自动路由 / 传 chute_id 人工指定）/ 装车 |
+| POST | `/api/packages/:id/intercept` `/release` | 拦截 / 解除（错分件复核后回流重分） |
+| GET/POST | `/api/chutes` | 格口列表 / 新增 |
+| POST | `/api/chutes/:id/disable` `/enable` | 停用（可带 reroute_chute_id 改道）/ 启用 |
+| GET | `/api/sort-rules` | 当前发布版 + 草稿 |
+| POST/DELETE | `/api/sort-rules/draft` | 新建 / 放弃草稿 |
+| POST/PUT/DELETE | `/api/sort-rules/draft/rules[/:id]` | 草稿规则增改删 |
+| POST | `/api/sort-rules/draft/simulate` `/publish` | 试算影响 / 发布新版本 |
 | GET | `/api/stats/backlog` `/api/stats/abnormal` | 积压 / 异常统计 |
 
 ## 目录结构
@@ -92,9 +109,10 @@ express-hub/
 │       ├── schema.sql      # 表结构
 │       ├── seed.js         # 模拟数据
 │       ├── helpers.js      # 超时预警计算、状态机
-│       └── routes/         # vehicles / packages / stats
+│       ├── sorting.js      # 分拣规则匹配引擎
+│       └── routes/         # vehicles / packages / stats / sorting（格口与规则）
 └── client/                 # React 前端
     └── src/
-        ├── pages/          # 总览 / 车辆 / 包裹 / 统计
+        ├── pages/          # 总览 / 车辆 / 包裹 / 分拣规则 / 统计
         └── components/     # 通用组件
 ```

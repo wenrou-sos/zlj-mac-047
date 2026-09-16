@@ -21,7 +21,8 @@ router.get('/overview', async (req, res) => {
        COUNT(*) FILTER (WHERE status = 'pending')::int      AS pending,
        COUNT(*) FILTER (WHERE status = 'sorted')::int       AS sorted,
        COUNT(*) FILTER (WHERE status = 'loaded')::int       AS loaded,
-       COUNT(*) FILTER (WHERE status = 'intercepted')::int  AS intercepted
+       COUNT(*) FILTER (WHERE status = 'intercepted')::int  AS intercepted,
+       COUNT(*) FILTER (WHERE needs_review)::int            AS needs_review
      FROM packages`
   );
   const vehicles = await query(`SELECT * FROM vehicles WHERE status NOT IN ('departed','expected')`);

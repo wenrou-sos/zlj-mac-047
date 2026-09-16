@@ -1,5 +1,6 @@
-// 本地模拟数据：生成车辆班次 + 包裹，覆盖各种业务状态（含超时、异常场景）
+// 本地模拟数据：生成车辆班次 + 包裹 + 格口与分拣规则，覆盖各种业务状态（含超时、异常场景）
 import { query } from './db.js';
+import { evaluate } from './sorting.js';
 
 const ROUTES = [
   { code: 'BJ-SH',  from: '北京', to: '上海' },
@@ -21,6 +22,35 @@ const ABNORMAL = [
   ['prohibited', '疑似违禁品', 0.10],
 ];
 
+// 格口与分拣规则（发布版 v1）
+const CHUTES = [
+  ['A01', '华东向（上海/苏州）'],
+  ['A02', '苏浙向（南京/杭州）'],
+  ['A03', '北京向'],
+  ['A04', '华南向（广州/深圳）'],
+  ['A05', '西南向（成都/重庆）'],
+  ['A06', '华中向（武汉/长沙）'],
+  ['A07', '西北向（西安）'],
+  ['B01', '大件格口（超重件）'],
+  ['C02', '备用格口（设备维护中）', 'disabled'],
+];
+// [priority, destination(null=任意), minWeight, maxWeight, chuteCode]
+const RULES = [
+  [5,   null,   20,   null, 'B01'], // 超重件优先进大件格口
+  [10,  '上海', null, null, 'A01'],
+  [10,  '苏州', null, null, 'A01'],
+  [10,  '南京', null, null, 'A02'],
+  [10,  '杭州', null, null, 'A02'],
+  [10,  '北京', null, null, 'A03'],
+  [10,  '广州', null, null, 'A04'],
+  [10,  '深圳', null, null, 'A04'],
+  [10,  '成都', null, null, 'A05'],
+  [10,  '重庆', null, null, 'A05'],
+  [10,  '武汉', null, null, 'A06'],
+  [10,  '长沙', null, null, 'A06'],
+  [10,  '西安', null, null, 'A07'],
+];
+
 const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 const pick = (arr) => arr[rand(0, arr.length - 1)];
 const minutesAgo = (n) => new Date(Date.now() - n * 60_000);
@@ -38,7 +68,51 @@ const abnormalNote = (type) => ABNORMAL.find(([t]) => t === type)[1];
 let trackingSeq = 100000;
 const nextTrackingNo = () => `SF${Date.now().toString().slice(-8)}${(trackingSeq++).toString().slice(-6)}`;
 
-async function insertPackages(vehicleId, count, stage) {
+// 灌入格口与发布版规则（幂等：已有格口则跳过，供老库升级）
+async function seedChutesAndRules() {
+  const [{ count }] = await query('SELECT COUNT(*)::int AS count FROM chutes');
+  if (count > 0) {
+    const [version] = await query(`SELECT * FROM rule_versions WHERE status = 'published' LIMIT 1`);
+    if (!version) return null;
+    const rules = await query(
+      `SELECT r.*, c.code AS chute_code, c.name AS chute_name, c.status AS chute_status
+       FROM sort_rules r JOIN chutes c ON c.id = r.chute_id WHERE r.version_id = $1
+       ORDER BY r.priority, r.id`,
+      [version.id]
+    );
+    return { version, rules };
+  }
+
+  const chuteIds = {};
+  for (const [code, name, status] of CHUTES) {
+    const rows = await query(
+      `INSERT INTO chutes (code, name, status, disabled_at)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [code, name, status || 'active', status === 'disabled' ? minutesAgo(600) : null]
+    );
+    chuteIds[code] = rows[0].id;
+  }
+  const [version] = await query(
+    `INSERT INTO rule_versions (version_no, status, published_at) VALUES (1, 'published', NOW()) RETURNING *`
+  );
+  for (const [priority, destination, minW, maxW, chuteCode] of RULES) {
+    await query(
+      `INSERT INTO sort_rules (version_id, priority, destination, min_weight, max_weight, chute_id)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [version.id, priority, destination, minW, maxW, chuteIds[chuteCode]]
+    );
+  }
+  const rules = await query(
+    `SELECT r.*, c.code AS chute_code, c.name AS chute_name, c.status AS chute_status
+     FROM sort_rules r JOIN chutes c ON c.id = r.chute_id WHERE r.version_id = $1
+     ORDER BY r.priority, r.id`,
+    [version.id]
+  );
+  console.log(`[seed] 已生成格口 ${CHUTES.length} 个、分拣规则 ${RULES.length} 条（发布版 v1）`);
+  return { version, rules };
+}
+
+async function insertPackages(vehicleId, count, stage, ruleCtx) {
   // stage 决定包裹状态分布
   for (let i = 0; i < count; i++) {
     const abnormal = Math.random() < 0.05;
@@ -52,17 +126,42 @@ async function insertPackages(vehicleId, count, stage) {
     if (status === 'sorted' || status === 'loaded') {
       sortedAt = minutesAgo(rand(5, 90));
     }
+    const destination = pick(DESTINATIONS);
+    const weight = (rand(1, 3000) / 100).toFixed(2);
+
+    // 已分拣/已装车：按发布版规则写入当时的格口与规则版本快照
+    let chuteId = null, ruleId = null, ruleVersionId = null, hitReason = null;
+    if (sortedAt && ruleCtx) {
+      const d = evaluate({ destination, weight_kg: weight }, ruleCtx.version, ruleCtx.rules);
+      if (d.outcome === 'routed') {
+        chuteId = d.chute.id;
+        ruleId = d.rule.id;
+        ruleVersionId = ruleCtx.version.id;
+        hitReason = d.reason;
+      }
+    }
+    // 少量待分拣包裹落在待判区（冲突/无匹配的历史遗留）
+    const needsReview = status === 'pending' && !abnormal && Math.random() < 0.06;
+    if (needsReview) {
+      hitReason = pick([
+        '没有匹配的分拣规则',
+        '规则冲突：多条规则优先级相同且均匹配，需人工判定',
+      ]);
+    }
+
     const type = abnormal ? pickAbnormalType() : null;
     await query(
       `INSERT INTO packages (tracking_no, vehicle_id, destination, weight_kg, status,
-        is_abnormal, abnormal_type, abnormal_note, intercepted_at, sorted_at, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        is_abnormal, abnormal_type, abnormal_note, intercepted_at, sorted_at, created_at,
+        chute_id, rule_id, rule_version_id, hit_reason, needs_review)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
-        nextTrackingNo(), vehicleId, pick(DESTINATIONS), (rand(1, 3000) / 100).toFixed(2),
+        nextTrackingNo(), vehicleId, destination, weight,
         abnormal ? 'intercepted' : status,
         abnormal, type, abnormal ? abnormalNote(type) : null,
         abnormal ? minutesAgo(rand(10, 120)) : null,
         sortedAt, minutesAgo(rand(60, 600)),
+        chuteId, ruleId, ruleVersionId, hitReason, needsReview,
       ]
     );
   }
@@ -81,11 +180,14 @@ async function insertVehicle(v) {
 }
 
 export async function seedIfEmpty(force = false) {
+  if (force) {
+    await query('TRUNCATE packages, vehicles, sort_rules, rule_versions, chutes RESTART IDENTITY');
+  }
+  // 格口与规则独立灌入：老库升级时即使已有车辆包裹数据，也能补上规则基础数据
+  const ruleCtx = await seedChutesAndRules();
+
   const [{ count }] = await query('SELECT COUNT(*)::int AS count FROM vehicles');
   if (count > 0 && !force) return false;
-  if (force) {
-    await query('TRUNCATE packages, vehicles RESTART IDENTITY');
-  }
 
   const plate = () => `沪A·${String(rand(10000, 99999))}`;
   const base = (route, status, extra = {}) => ({
@@ -173,7 +275,7 @@ export async function seedIfEmpty(force = false) {
 
   for (const [v, stage, pkgCount] of vehicles) {
     const id = await insertVehicle(v);
-    if (pkgCount > 0) await insertPackages(id, pkgCount, stage);
+    if (pkgCount > 0) await insertPackages(id, pkgCount, stage, ruleCtx);
   }
 
   const [v] = await query('SELECT COUNT(*)::int AS c FROM vehicles');

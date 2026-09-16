@@ -6,6 +6,7 @@ import { seedIfEmpty } from './seed.js';
 import vehiclesRouter from './routes/vehicles.js';
 import packagesRouter from './routes/packages.js';
 import statsRouter from './routes/stats.js';
+import sortingRouter from './routes/sorting.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -16,6 +17,7 @@ app.use(express.json());
 app.use('/api/vehicles', vehiclesRouter);
 app.use('/api/packages', packagesRouter);
 app.use('/api', statsRouter);
+app.use('/api', sortingRouter);
 
 app.get('/api/health', (req, res) => res.json({ ok: true, time: new Date().toISOString() }));
 

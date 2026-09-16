@@ -24,10 +24,25 @@ export const api = {
     return request(`/api/packages${qs ? `?${qs}` : ''}`);
   },
   createPackage: (body) => request('/api/packages', { method: 'POST', body: JSON.stringify(body) }),
-  sortPackage: (id) => request(`/api/packages/${id}/sort`, { method: 'POST' }),
+  scanPackage: (tracking_no) => request('/api/packages/scan', { method: 'POST', body: JSON.stringify({ tracking_no }) }),
+  sortPackage: (id, body) => request(`/api/packages/${id}/sort`, { method: 'POST', body: JSON.stringify(body || {}) }),
   loadPackage: (id) => request(`/api/packages/${id}/load`, { method: 'POST' }),
   interceptPackage: (id, body) => request(`/api/packages/${id}/intercept`, { method: 'POST', body: JSON.stringify(body) }),
-  releasePackage: (id) => request(`/api/packages/${id}/release`, { method: 'POST' }),
+  releasePackage: (id, body) => request(`/api/packages/${id}/release`, { method: 'POST', body: JSON.stringify(body || {}) }),
+  // 格口
+  chutes: () => request('/api/chutes'),
+  createChute: (body) => request('/api/chutes', { method: 'POST', body: JSON.stringify(body) }),
+  disableChute: (id, body) => request(`/api/chutes/${id}/disable`, { method: 'POST', body: JSON.stringify(body || {}) }),
+  enableChute: (id) => request(`/api/chutes/${id}/enable`, { method: 'POST' }),
+  // 分拣规则
+  sortRules: () => request('/api/sort-rules'),
+  createDraft: () => request('/api/sort-rules/draft', { method: 'POST' }),
+  discardDraft: () => request('/api/sort-rules/draft', { method: 'DELETE' }),
+  addRule: (body) => request('/api/sort-rules/draft/rules', { method: 'POST', body: JSON.stringify(body) }),
+  updateRule: (id, body) => request(`/api/sort-rules/draft/rules/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteRule: (id) => request(`/api/sort-rules/draft/rules/${id}`, { method: 'DELETE' }),
+  simulateDraft: () => request('/api/sort-rules/draft/simulate', { method: 'POST' }),
+  publishDraft: () => request('/api/sort-rules/draft/publish', { method: 'POST' }),
   // 统计
   backlog: () => request('/api/stats/backlog'),
   abnormalStats: () => request('/api/stats/abnormal'),

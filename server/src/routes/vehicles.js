@@ -63,11 +63,11 @@ router.post('/:id/action/:action', async (req, res) => {
     [flow.to, id]
   );
 
-  // 完成分拣：车上所有待分拣包裹自动标记为已分拣（拦截件除外）
+  // 完成分拣：车上待分拣包裹自动标记为已分拣（拦截件、待判件除外；sorted_at 只记首分时间）
   if (action === 'sort-end') {
     await query(
-      `UPDATE packages SET status = 'sorted', sorted_at = NOW()
-       WHERE vehicle_id = $1 AND status = 'pending'`,
+      `UPDATE packages SET status = 'sorted', sorted_at = COALESCE(sorted_at, NOW())
+       WHERE vehicle_id = $1 AND status = 'pending' AND needs_review = FALSE`,
       [id]
     );
   }
