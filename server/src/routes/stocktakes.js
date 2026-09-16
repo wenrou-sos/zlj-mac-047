@@ -102,6 +102,43 @@ async function findPeriodMove(packageId, stocktake, direction, locationId, execu
   return row || null;
 }
 
+// 跨库位盘点：该件在“其他库位盘点单”中被有效扫到实物（相符/期间移入/错位）。
+// A 库位盘亏候选、B 库位扫到实物时应核销 A 的盘亏，而不是把已找到的件判成丢失。
+async function findCrossStocktakeFound(packageId, stocktakeId, sinceTime = null, executor = query) {
+  const params = [packageId, stocktakeId];
+  let timeClause = '';
+  if (sinceTime) {
+    params.push(sinceTime);
+    timeClause = `AND sc.observed_at >= $${params.length}`;
+  }
+  return executor(
+    `SELECT sc.stocktake_id, sc.result, sc.observed_at, l.code AS location_code
+     FROM stocktake_scans sc
+     JOIN stocktakes s ON s.id = sc.stocktake_id
+     JOIN locations l ON l.id = sc.observed_location_id
+     WHERE sc.package_id = $1 AND sc.stocktake_id <> $2
+       AND sc.result IN ('matched','period_in','misplaced')
+       ${timeClause}
+     ORDER BY sc.observed_at DESC`,
+    params
+  );
+}
+
+// 扫到实物后，自动驳回“其他盘点单”中同一件尚待复核的盘亏差异
+async function dismissCrossPendingShortages(executor, packageId, stocktake, message) {
+  return executor(
+    `UPDATE stocktake_differences
+     SET resolution = 'dismissed',
+         resolution_note = COALESCE(resolution_note, $1),
+         reviewed_by = COALESCE(reviewed_by, '系统核销'),
+         reviewed_at = NOW()
+     WHERE package_id = $2 AND diff_type = 'shortage' AND resolution = 'pending'
+       AND stocktake_id <> $3
+     RETURNING id`,
+    [message, packageId, stocktake.id]
+  );
+}
+
 // 发起盘点：冻结该库位在盘点时点的账面快照；不阻断到件、上架、移位、装车
 router.post('/', async (req, res) => {
   const { location_id, note, created_by } = req.body || {};
@@ -245,11 +282,8 @@ router.post('/:id/scan', async (req, res) => {
         [stocktake.id, pkg?.id || null, trackingNo, observed.id, result, req.body?.note || null]
       );
 
-      if (snapshot && ['matched', 'shipped', 'period_out'].includes(result)) {
+      if (snapshot && ['matched', 'shipped', 'period_out', 'misplaced'].includes(result)) {
         await tq('UPDATE stocktake_snapshots SET result = $1 WHERE id = $2', [result, snapshot.id]);
-      }
-      if (snapshot && result === 'misplaced') {
-        await tq("UPDATE stocktake_snapshots SET result = 'misplaced' WHERE id = $1", [snapshot.id]);
       }
 
       if (diffType === 'surplus') {
@@ -269,25 +303,24 @@ router.post('/:id/scan', async (req, res) => {
            RETURNING *`,
           [stocktake.id, pkg.id, trackingNo, pkg.current_location_id, observed.id, pkg.destination]
         );
-        // 其他未完成库位盘点可能已把同一件列为盘亏；实物已扫到，自动驳回对应待复核盘亏
-        const linkedShortages = await tq(
-          `UPDATE stocktake_differences
-           SET resolution = 'dismissed',
-               resolution_note = COALESCE(resolution_note, $1),
-               reviewed_by = COALESCE(reviewed_by, '系统核销'),
-               reviewed_at = NOW()
-           WHERE package_id = $2 AND diff_type = 'shortage' AND resolution = 'pending'
-             AND stocktake_id <> $3
-           RETURNING id`,
-          [`盘点单 #${stocktake.id} 在 ${stocktake.location_code} 扫到该件，自动核销盘亏`, pkg.id, stocktake.id]
+        // 实物已在本库位扫到：核销其他盘点单中同一件尚待复核的盘亏
+        const linked = await dismissCrossPendingShortages(
+          tq, pkg.id, stocktake,
+          `盘点单 #${stocktake.id} 在 ${stocktake.location_code} 扫到该件（错位），自动核销盘亏`
         );
-        if (linkedShortages.length) {
+        if (linked.length) {
           await tq(
             `UPDATE stocktake_differences SET resolution_note = COALESCE(resolution_note, $1)
              WHERE id = $2`,
-            [`已核销其他盘点单的 ${linkedShortages.length} 条盘亏候选`, misDiff.id]
+            [`已核销其他盘点单的 ${linked.length} 条盘亏候选`, misDiff.id]
           );
         }
+      } else if (pkg && ['matched', 'period_in'].includes(result)) {
+        // 相符或盘点期间移入的实物扫到，同样核销其他盘点单挂着的盘亏候选
+        await dismissCrossPendingShortages(
+          tq, pkg.id, stocktake,
+          `盘点单 #${stocktake.id} 在 ${stocktake.location_code} 扫到该件，自动核销盘亏`
+        );
       }
     });
     res.status(201).json(await buildDetail(stocktake.id));
@@ -313,41 +346,47 @@ router.post('/:id/complete', async (req, res) => {
         [stocktake.id]
       );
 
+      const insertShortage = async (snap) => {
+        await tq(
+          `INSERT INTO stocktake_differences
+             (stocktake_id, package_id, tracking_no, diff_type, expected_location_id, actual_destination)
+           VALUES ($1,$2,$3,'shortage',$4,$5)
+           ON CONFLICT DO NOTHING`,
+          [stocktake.id, snap.package_id, snap.tracking_no, stocktake.location_id, snap.destination]
+        );
+      };
+
       for (const snap of pending) {
         if (snap.current_location_id === stocktake.location_id) {
-          await tq("UPDATE stocktake_snapshots SET result = 'shortage' WHERE id = $1", [snap.id]);
-          await tq(
-            `INSERT INTO stocktake_differences
-               (stocktake_id, package_id, tracking_no, diff_type, expected_location_id, actual_destination)
-             VALUES ($1,$2,$3,'shortage',$4,$5)
-             ON CONFLICT DO NOTHING`,
-            [stocktake.id, snap.package_id, snap.tracking_no, stocktake.location_id, snap.destination]
+          // 账面仍在本库位却没盘到：先看是否被其他库位盘点扫到实物（跨库位错位）
+          const crossFound = await findCrossStocktakeFound(
+            snap.package_id, stocktake.id, stocktake.snapshot_at, tq
           );
+          if (crossFound.length) {
+            // 实物已在其他库位盘点中扫到：本单核销，不重复判盘亏；账面归位由该错位差异负责
+            await tq("UPDATE stocktake_snapshots SET result = 'period_out' WHERE id = $1", [snap.id]);
+          } else {
+            await tq("UPDATE stocktake_snapshots SET result = 'shortage' WHERE id = $1", [snap.id]);
+            await insertShortage(snap);
+          }
         } else if (snap.status === 'loaded' || snap.status === 'departed') {
           const moved = await findPeriodMove(snap.package_id, stocktake, 'from', stocktake.location_id, tq);
           await tq("UPDATE stocktake_snapshots SET result = 'shipped' WHERE id = $1", [snap.id]);
           if (!moved) {
             // 没有流水却在车辆/离场位置，保守列入盘亏交复核，不直接静默核销
-            await tq(
-              `INSERT INTO stocktake_differences
-                 (stocktake_id, package_id, tracking_no, diff_type, expected_location_id, actual_destination)
-               VALUES ($1,$2,$3,'shortage',$4,$5) ON CONFLICT DO NOTHING`,
-              [stocktake.id, snap.package_id, snap.tracking_no, stocktake.location_id, snap.destination]
-            );
+            await insertShortage(snap);
           }
         } else {
           const moved = await findPeriodMove(snap.package_id, stocktake, 'from', stocktake.location_id, tq);
+          const crossFound = moved ? [] : await findCrossStocktakeFound(
+            snap.package_id, stocktake.id, stocktake.snapshot_at, tq
+          );
           await tq(
             "UPDATE stocktake_snapshots SET result = CASE WHEN $2 THEN 'period_out' ELSE 'shortage' END WHERE id = $1",
-            [snap.id, !!moved]
+            [snap.id, !!(moved || crossFound.length)]
           );
-          if (!moved) {
-            await tq(
-              `INSERT INTO stocktake_differences
-                 (stocktake_id, package_id, tracking_no, diff_type, expected_location_id, actual_destination)
-               VALUES ($1,$2,$3,'shortage',$4,$5) ON CONFLICT DO NOTHING`,
-              [stocktake.id, snap.package_id, snap.tracking_no, stocktake.location_id, snap.destination]
-            );
+          if (!moved && !crossFound.length) {
+            await insertShortage(snap);
           }
         }
       }
@@ -410,12 +449,26 @@ router.post('/:id/adjust', async (req, res) => {
         if (d.resolution !== 'confirmed' || d.adjusted_at) continue;
 
         if (d.diff_type === 'surplus') {
+          // 盘盈补账前再确认运单未在系统中出现（防止补账覆盖已到件/已装车件）
+          const [existing] = await tq(
+            'SELECT id, status, current_location_id FROM packages WHERE tracking_no = $1',
+            [d.tracking_no]
+          );
+          if (existing) {
+            if (existing.current_location_id === d.actual_location_id) {
+              await tq('UPDATE stocktake_differences SET package_id = $1, adjusted_at = NOW() WHERE id = $2', [existing.id, d.id]);
+              continue;
+            }
+            throw Object.assign(
+              new Error(`运单 ${d.tracking_no} 已存在（${existing.status}），不能作为盘盈补账，请重新复盘`),
+              { status: 409 }
+            );
+          }
           const rows = await tq(
             `INSERT INTO packages
                (tracking_no, destination, weight_kg, status, intercept_status,
                 is_abnormal, current_location_id)
              VALUES ($1,$2,1,'pending','none',FALSE,$3)
-             ON CONFLICT (tracking_no) DO UPDATE SET current_location_id = EXCLUDED.current_location_id
              RETURNING id, current_location_id`,
             [d.tracking_no, d.actual_destination || '待确认', d.actual_location_id]
           );
@@ -432,24 +485,67 @@ router.post('/:id/adjust', async (req, res) => {
 
         if (d.diff_type === 'shortage') {
           if (!d.package_id) throw Object.assign(new Error('盘亏差异缺少包裹ID'), { status: 400 });
-          const [pkg] = await tq('SELECT * FROM packages WHERE id = $1', [d.package_id]);
+          // 行锁：复核后到调账前的并发移位/装车在此被挡住
+          const [pkg] = await tq('SELECT * FROM packages WHERE id = $1 FOR UPDATE', [d.package_id]);
           if (!pkg) throw Object.assign(new Error(`运单 ${d.tracking_no} 不存在`), { status: 400 });
+
+          // 1) 盘点期间存在从本库位移出/装车流水 → 不能判盘亏（刚发走的件不能算丢失）
           const movedDuringCount = await findPeriodMove(pkg.id, stocktake, 'from', d.expected_location_id, tq);
           if (movedDuringCount) {
             throw Object.assign(
-              new Error(`运单 ${d.tracking_no} 在盘点期间存在移位/装车流水，不能判为盘亏；请重新复盘`),
+              new Error(`运单 ${d.tracking_no} 在盘点期间存在移位/装车流水，不能判为盘亏；请重新复盘或驳回差异`),
+              { status: 409 }
+            );
+          }
+          // 2) 复核后账面位置已变化（含装车/离场）→ 不能调账
+          if (['loaded', 'departed'].includes(pkg.status)) {
+            throw Object.assign(
+              new Error(`运单 ${d.tracking_no} 已装车/离场，不能再判盘亏，请重新复盘或驳回差异`),
               { status: 409 }
             );
           }
           if (pkg.current_location_id !== d.expected_location_id) {
             throw Object.assign(
-              new Error(`运单 ${d.tracking_no} 复核后账面位置已变化，请重新复盘`),
+              new Error(`运单 ${d.tracking_no} 复核后账面位置已变化，请重新复盘或驳回差异`),
               { status: 409 }
             );
           }
+          // 3) 跨库位盘点：已在其他盘点单被有效扫到实物 → 不能判盘亏
+          const crossFound = await findCrossStocktakeFound(pkg.id, stocktake.id, stocktake.snapshot_at, tq);
+          if (crossFound.length) {
+            throw Object.assign(
+              new Error(`运单 ${d.tracking_no} 已在库位 ${crossFound[0].location_code} 被盘点扫到，属于跨库位错位，不能判盘亏`),
+              { status: 409 }
+            );
+          }
+          // 4) 其他盘点单已确认（未必调账）的错位差异指向本件 → 盘亏与错位冲突，交复核员裁决
+          const confirmedMisplaced = await tq(
+            `SELECT d.id, s.id AS st_id, l.code AS location_code
+             FROM stocktake_differences d
+             JOIN stocktakes s ON s.id = d.stocktake_id
+             LEFT JOIN locations l ON l.id = d.actual_location_id
+             WHERE d.package_id = $1 AND d.diff_type = 'misplaced'
+               AND d.resolution = 'confirmed' AND d.adjusted_at IS NULL
+               AND d.stocktake_id <> $2
+             LIMIT 1`,
+            [pkg.id, stocktake.id]
+          );
+          if (confirmedMisplaced.length) {
+            throw Object.assign(
+              new Error(`运单 ${d.tracking_no} 在盘点单 #${confirmedMisplaced[0].st_id} 存在已确认的错位差异，请先处理错位或驳回本盘亏`),
+              { status: 409 }
+            );
+          }
+
           const from = pkg.current_location_id;
-          await tq(`UPDATE packages SET status = 'lost', current_location_id = $1 WHERE id = $2`, [lostLoc.id, pkg.id]);
-          await tq('UPDATE stocktake_differences SET adjusted_at = NOW() WHERE id = $1', [d.id]);
+          await tq(
+            `UPDATE packages SET status = 'lost', current_location_id = $1 WHERE id = $2`,
+            [lostLoc.id, pkg.id]
+          );
+          await tq(
+            'UPDATE stocktake_differences SET adjusted_at = NOW(), pre_adjust_status = $1 WHERE id = $2',
+            [pkg.status, d.id]
+          );
           await recordMovement({
             packageId: pkg.id,
             fromLocationId: from,
@@ -461,20 +557,61 @@ router.post('/:id/adjust', async (req, res) => {
         }
 
         if (d.diff_type === 'misplaced') {
-          const [pkg] = await tq('SELECT * FROM packages WHERE id = $1', [d.package_id]);
+          if (!d.package_id) throw Object.assign(new Error('错位差异缺少包裹ID'), { status: 400 });
+          const [pkg] = await tq('SELECT * FROM packages WHERE id = $1 FOR UPDATE', [d.package_id]);
           if (!pkg) throw Object.assign(new Error(`运单 ${d.tracking_no} 不存在`), { status: 400 });
+
+          // 已装车/离场：旧错位差异绝不能覆盖车辆库位
+          if (['loaded', 'departed'].includes(pkg.status)) {
+            throw Object.assign(
+              new Error(`运单 ${d.tracking_no} 已装车/离场，错位调账会覆盖车辆位置，请驳回差异或先卸车复盘`),
+              { status: 409 }
+            );
+          }
+
+          // 跨库位盘点冲突：该件已被其他盘点单判盘亏并调账为 lost，此处扫到实物，受控恢复
+          if (pkg.status === 'lost') {
+            const [priorShortage] = await tq(
+              `SELECT * FROM stocktake_differences
+               WHERE package_id = $1 AND diff_type = 'shortage' AND adjusted_at IS NOT NULL
+               ORDER BY adjusted_at DESC LIMIT 1`,
+              [pkg.id]
+            );
+            const restoreStatus = ['pending', 'sorted'].includes(priorShortage?.pre_adjust_status)
+              ? priorShortage.pre_adjust_status
+              : 'pending';
+            await tq(
+              `UPDATE packages SET status = $1, current_location_id = $2 WHERE id = $3`,
+              [restoreStatus, d.actual_location_id, pkg.id]
+            );
+            await tq('UPDATE stocktake_differences SET adjusted_at = NOW() WHERE id = $1', [d.id]);
+            if (priorShortage) {
+              await tq(
+                `UPDATE stocktake_differences
+                 SET resolution_note = COALESCE(resolution_note, $1)
+                 WHERE id = $2`,
+                [`跨库位盘点 #${stocktake.id} 扫回实物，已从 lost 受控恢复`, priorShortage.id]
+              );
+            }
+            await recordMovement({
+              packageId: pkg.id,
+              fromLocationId: pkg.current_location_id,
+              toLocationId: d.actual_location_id,
+              movementType: 'adjust-misplace',
+              stocktakeId: stocktake.id,
+              note: d.resolution_note || '跨库位错位找回，从盘亏受控恢复',
+            }, tq);
+            continue;
+          }
+
           if (pkg.current_location_id === d.actual_location_id) {
             await tq('UPDATE stocktake_differences SET adjusted_at = NOW() WHERE id = $1', [d.id]);
             continue;
           }
-          const movedAfterFreeze = await tq(
-            `SELECT 1 FROM package_movements
-             WHERE package_id = $1 AND created_at > $2 LIMIT 1`,
-            [pkg.id, stocktake.completed_at]
-          );
-          if (movedAfterFreeze.length) {
+          // 账面预期位置已与差异生成时不一致：差异生成后发生过移位（含装车），旧差异不得覆盖
+          if (pkg.current_location_id !== d.expected_location_id) {
             throw Object.assign(
-              new Error(`运单 ${d.tracking_no} 在实盘冻结后发生移动，请重新复盘`),
+              new Error(`运单 ${d.tracking_no} 自错位差异生成后位置已变化，请重新复盘后再调账`),
               { status: 409 }
             );
           }

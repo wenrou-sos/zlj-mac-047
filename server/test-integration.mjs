@@ -113,6 +113,73 @@ await req(`/packages/${pkgD.id}/release`, { method: 'POST' });
 d = (await req(`/packages?q=${pkgD.tracking_no}`)).items[0];
 assert(d.intercept_status === 'released' && d.status === 'sorted' && d.location_code === tHold.code, '解除拦截后位置/作业状态仍保持');
 
+// 7. 旧错位差异不得覆盖盘点期间的装车位置
+const tLoc5 = await makeLoc(unique('T5-'));
+const tLoc7B = await makeLoc(unique('T5B-'));
+const pkgE = await req('/packages', { method: 'POST', body: {
+  tracking_no: unique('ST-E-'), destination: '武汉', vehicle_id: activeVehicle.id,
+}}, 201);
+await req(`/packages/${pkgE.id}/sort`, { method: 'POST', body: { target_location_id: tLoc5.id } });
+// A 库位盘点：实物其实在别处，结束得盘亏（先确认但暂不调账，包裹仍 sorted 在 tLoc5）
+const st5 = await req('/stocktakes', { method: 'POST', body: { location_id: tLoc5.id }}, 201);
+const done5a = await req(`/stocktakes/${st5.id}/complete`, { method: 'POST' });
+const shortE = done5a.differences.find((x) => x.tracking_no === pkgE.tracking_no && x.diff_type === 'shortage');
+assert(shortE, 'A 库位盘点生成盘亏差异');
+// B 库位（空）盘点扫到该件：账面在 tLoc5、实物在 B，自然形成错位差异（无移位流水）
+const st5b = await req('/stocktakes', { method: 'POST', body: { location_id: tLoc7B.id }}, 201);
+const scanE = await req(`/stocktakes/${st5b.id}/scan`, { method: 'POST', body: {
+  tracking_no: pkgE.tracking_no, observed_location_id: tLoc7B.id,
+}}, 201);
+const misE = scanE.differences.find((x) => x.tracking_no === pkgE.tracking_no && x.diff_type === 'misplaced');
+assert(misE, 'B 库位跨库位扫描形成错位差异');
+// 错位差异已产生，随后该件正常装车（位置变为车辆库位）
+await req(`/packages/${pkgE.id}/load`, { method: 'POST' });
+const loadedE = (await req(`/packages?q=${pkgE.tracking_no}`)).items[0];
+assert(loadedE.status === 'loaded', '错位差异生成后该件已装车');
+const done5b = await req(`/stocktakes/${st5b.id}/complete`, { method: 'POST' });
+const misEDiff = done5b.differences.find((x) => x.id === misE.id);
+assert(misEDiff, '错位差异保留到复核阶段');
+await req(`/stocktakes/${st5b.id}/differences/${misE.id}/review`, {
+  method: 'PUT', body: { decision: 'confirmed', note: '误以为错位' },
+});
+await expect409(() => req(`/stocktakes/${st5b.id}/adjust`, { method: 'POST' }),
+  '错位差异调整被拒绝：不能把已装车件从车辆库位拉回');
+const stillLoaded = (await req(`/packages?q=${pkgE.tracking_no}`)).items[0];
+assert(stillLoaded.status === 'loaded' && stillLoaded.location_code === `VEH-${activeVehicle.id}`,
+  '装车位置未被旧错位差异覆盖');
+
+// 8. 跨库位盘点：A 判盘亏并调账(lost)，B 扫到实物判错位，错位调账受控恢复，不产生矛盾账
+const tLoc6 = await makeLoc(unique('T6-'));
+const tLoc7 = await makeLoc(unique('T7-'));
+const pkgF = await req('/packages', { method: 'POST', body: { tracking_no: unique('ST-F-'), destination: '南京' }}, 201);
+await req(`/packages/${pkgF.id}/sort`, { method: 'POST', body: { target_location_id: tLoc6.id } });
+const st6 = await req('/stocktakes', { method: 'POST', body: { location_id: tLoc6.id }}, 201);
+// 实物其实在 tLoc7：无流水的跨库位错位。结束 A 盘点得到盘亏
+const done6 = await req(`/stocktakes/${st6.id}/complete`, { method: 'POST' });
+const shortF = done6.differences.find((x) => x.tracking_no === pkgF.tracking_no && x.diff_type === 'shortage');
+assert(shortF, 'A 库位盘点生成盘亏差异');
+await req(`/stocktakes/${st6.id}/differences/${shortF.id}/review`, {
+  method: 'PUT', body: { decision: 'confirmed', note: '确认没找到' },
+});
+await req(`/stocktakes/${st6.id}/adjust`, { method: 'POST' });
+let f = (await req(`/packages?q=${pkgF.tracking_no}`)).items[0];
+assert(f.status === 'lost' && f.location_code === 'LOST-01', 'A 库位盘亏调账后置 lost / LOST-01');
+// B 库位盘点扫到实物，形成错位差异
+const st7 = await req('/stocktakes', { method: 'POST', body: { location_id: tLoc7.id }}, 201);
+const scanF = await req(`/stocktakes/${st7.id}/scan`, { method: 'POST', body: {
+  tracking_no: pkgF.tracking_no, observed_location_id: tLoc7.id,
+}}, 201);
+const misF = scanF.differences.find((x) => x.tracking_no === pkgF.tracking_no && x.diff_type === 'misplaced');
+assert(misF, 'B 库位扫到 lost 件形成错位差异');
+const done7 = await req(`/stocktakes/${st7.id}/complete`, { method: 'POST' });
+await req(`/stocktakes/${st7.id}/differences/${misF.id}/review`, {
+  method: 'PUT', body: { decision: 'confirmed', note: '找回实物' },
+});
+await req(`/stocktakes/${st7.id}/adjust`, { method: 'POST' });
+f = (await req(`/packages?q=${pkgF.tracking_no}`)).items[0];
+assert(f.status === 'sorted' && f.current_location_id === tLoc7.id,
+  '跨库位错位调账受控恢复：status 还原 sorted，位置落在实盘库位');
+
 console.log(failures ? `\n${failures} 个断言失败` : '\n全部集成场景通过');
 process.exit(failures ? 1 : 0);
 

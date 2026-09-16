@@ -165,9 +165,14 @@ CREATE TABLE IF NOT EXISTS stocktake_differences (
   reviewed_by       VARCHAR(50),
   reviewed_at       TIMESTAMPTZ,
   adjusted_at       TIMESTAMPTZ,
+  -- 盘亏调账前的作业状态（pending/sorted），供跨库位盘点扫回时受控恢复
+  pre_adjust_status VARCHAR(20),
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- 兼容旧库：补 pre_adjust_status 列
+ALTER TABLE stocktake_differences ADD COLUMN IF NOT EXISTS pre_adjust_status VARCHAR(20);
 CREATE INDEX IF NOT EXISTS idx_diffs_stocktake ON stocktake_differences(stocktake_id, resolution, diff_type);
+CREATE INDEX IF NOT EXISTS idx_diffs_package_type ON stocktake_differences(package_id, diff_type, resolution);
 
 -- 初始化场区默认库位（不用 ON CONFLICT 推断，兼容已存在数据的旧库）
 INSERT INTO locations (code, loc_type, zone, name, capacity)
